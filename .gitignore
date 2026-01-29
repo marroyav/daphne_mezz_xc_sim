@@ -8,3 +8,11 @@
 __pycache__/
 sample_waveform.bin
 sample_waveform.txt
+data/
+data/input/
+data/output/
+data/output/analysis/
+data/output/plots/
+*.bin
+*.txt
+*.png
