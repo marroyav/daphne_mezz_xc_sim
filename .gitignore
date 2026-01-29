@@ -1,0 +1,8 @@
+/st_xc_sim
+*.csv
+*_raw.txt
+*_xcorr.txt
+*_trigger.txt
+*.bin
+*.o
+__pycache__/
