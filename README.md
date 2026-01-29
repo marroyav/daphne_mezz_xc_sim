@@ -5,7 +5,7 @@ C++ simulation of the self-trigger matched filter in
 
 This model follows the transposed FIR structure and the pipeline registers used
 in the RTL, including the two-cycle tap pipeline and the xcorr output pipeline.
-It writes raw samples, xcorr output, and the trigger signal to both CSV and
+It writes raw samples, xcorr output, trigger, and frame markers to CSV and
 separate text files.
 
 ## Build
@@ -14,11 +14,7 @@ separate text files.
 make
 ```
 
-Or:
-
-```sh
-g++ -O2 -std=c++17 -o st_xc_sim st_xc_sim.cpp
-```
+The build uses `src/st_xc_sim.cpp`.
 
 ## Run (text input)
 
@@ -26,41 +22,50 @@ Input file: one integer per line (signed 14-bit by default). Lines starting with
 are ignored.
 
 ```sh
-./st_xc_sim --input waveform.txt --out-prefix run1 --threshold 2000
+./st_xc_sim --input waveform.txt --out-prefix data/output/analysis/run1 --threshold 2000
 ```
 
 If your input is unsigned 14-bit ADC counts (0..16383):
 
 ```sh
-./st_xc_sim --input waveform.txt --out-prefix run1 --threshold 2000 --unsigned14 --unsigned14-no-center
+./st_xc_sim --input waveform.txt --out-prefix data/output/analysis/run1 --threshold 2000 --unsigned14 --unsigned14-no-center
 ```
 
 ## Run (binary 16-bit LE)
 
 ```sh
-./st_xc_sim --input waveform.bin --input-bin16 --out-prefix run1 --threshold 2000
+./st_xc_sim --input waveform.bin --input-bin16 --out-prefix data/output/analysis/run1 --threshold 2000
 ```
 
 If binary is unsigned 14-bit ADC counts in 16-bit words:
 
 ```sh
-./st_xc_sim --input waveform.bin --input-bin16 --out-prefix run1 --threshold 2000 --unsigned14 --unsigned14-no-center
+./st_xc_sim --input waveform.bin --input-bin16 --out-prefix data/output/analysis/run1 --threshold 2000 --unsigned14 --unsigned14-no-center \
+  --auto-baseline --xcorr-negate --holdoff 1024
 ```
 
 ## Outputs
 
-Given `--out-prefix run1`:
+Given `--out-prefix data/output/analysis/run1`:
 
-- `run1.csv` (columns: `index,raw,xcorr,trigger`)
+- `run1.csv` columns:
+  `index,raw,raw_delayed,xcorr,xcorr_proc,trigger,frame_start,frame_active,frame_index,frame_id,frame_trigger`
 - `run1_raw.txt`
 - `run1_xcorr.txt`
 - `run1_trigger.txt`
 
-## Plot
+## Interactive Plot
 
 ```sh
-python3 plot_st_xc.py run1.csv
+python3 scripts/plot_st_xc_interactive.py data/output/analysis/run1.csv 200000 100000
 ```
+
+This generates an HTML plot in `data/output/plots/` with:
+- raw
+- xcorr_proc scaled to raw range
+Other traces (xcorr_proc, trigger, frame_start, frame_trigger) are available in the legend.
+When present, the plot uses `raw_delayed` (data alignment delay, default 256 samples) as the
+reference for scaling `xcorr_proc` and displays it by default.
 
 ## Generate a SiPM-like sample waveform
 
@@ -69,20 +74,22 @@ SiPM-like pulse (peak 10-12 counts, decay 50-60 ticks) on top of a configurable
 baseline (default 4000).
 
 ```sh
-python3 make_sample.py \
+python3 scripts/make_sample.py \
   --noise /Users/marroyav/proto_fix/daphne-server/runs/run_2026-01-28/channel_16.dat \
-  --out-bin sample_waveform.bin \
-  --out-txt sample_waveform.txt \
+  --out-bin data/input/sample_waveform.bin \
+  --out-txt data/input/sample_waveform.txt \
   --baseline 4000 \
   --peak 12 \
-  --tau-ticks 55
+  --tau-ticks 55 \
+  --num-pulses 3 \
+  --pulse-spacing 500
 ```
 
 Then run the sim:
 
 ```sh
-./st_xc_sim --input sample_waveform.bin --input-bin16 --unsigned14 --unsigned14-no-center \
-  --out-prefix sample --threshold 2000
+./st_xc_sim --input data/input/sample_waveform.bin --input-bin16 --unsigned14 --unsigned14-no-center \
+  --out-prefix data/output/analysis/sample --threshold 2000
 ```
 
 ## Notes on RTL matching
@@ -92,8 +99,10 @@ Then run the sim:
   zero-coefficient path and the DSP48E2 default pipeline latency.
 - The trigger condition matches the RTL: `xcorr > threshold` for two cycles
   with the previous cycle at or below the threshold.
+- The data path can be aligned with `--data-delay` (default 256 samples) to
+  match the `stc3.vhd` delay chain.
 
 ## Dependencies
 
-- C++17 compiler (e.g., g++)
-- Python 3 + matplotlib (for plotting only)
+- C++17 compiler
+- Python 3 + plotly (for interactive plots)
