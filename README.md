@@ -32,7 +32,7 @@ are ignored.
 If your input is unsigned 14-bit ADC counts (0..16383):
 
 ```sh
-./st_xc_sim --input waveform.txt --out-prefix run1 --threshold 2000 --unsigned14
+./st_xc_sim --input waveform.txt --out-prefix run1 --threshold 2000 --unsigned14 --unsigned14-no-center
 ```
 
 ## Run (binary 16-bit LE)
@@ -44,7 +44,7 @@ If your input is unsigned 14-bit ADC counts (0..16383):
 If binary is unsigned 14-bit ADC counts in 16-bit words:
 
 ```sh
-./st_xc_sim --input waveform.bin --input-bin16 --out-prefix run1 --threshold 2000 --unsigned14
+./st_xc_sim --input waveform.bin --input-bin16 --out-prefix run1 --threshold 2000 --unsigned14 --unsigned14-no-center
 ```
 
 ## Outputs
@@ -60,6 +60,29 @@ Given `--out-prefix run1`:
 
 ```sh
 python3 plot_st_xc.py run1.csv
+```
+
+## Generate a SiPM-like sample waveform
+
+This uses a noise file (uint16 LE with 14-bit samples) and injects a positive
+SiPM-like pulse (peak 10-12 counts, decay 50-60 ticks) on top of a configurable
+baseline (default 4000).
+
+```sh
+python3 make_sample.py \
+  --noise /Users/marroyav/proto_fix/daphne-server/runs/run_2026-01-28/channel_16.dat \
+  --out-bin sample_waveform.bin \
+  --out-txt sample_waveform.txt \
+  --baseline 4000 \
+  --peak 12 \
+  --tau-ticks 55
+```
+
+Then run the sim:
+
+```sh
+./st_xc_sim --input sample_waveform.bin --input-bin16 --unsigned14 --unsigned14-no-center \
+  --out-prefix sample --threshold 2000
 ```
 
 ## Notes on RTL matching

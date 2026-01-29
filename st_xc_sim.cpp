@@ -25,6 +25,7 @@ struct Options {
     std::string template_path;
     int64_t threshold = 0;
     bool unsigned14 = false;
+    bool no_center = false;
     bool input_bin16 = false;
     int reset_samples = 0;
     bool enable = true;
@@ -38,6 +39,7 @@ void PrintUsage(const char* prog) {
         << "  --template <file.txt>   Template coefficients, one per line\n"
         << "  --threshold <int>       Trigger threshold (signed)\n"
         << "  --unsigned14            Treat input as unsigned 14-bit (0..16383)\n"
+        << "  --unsigned14-no-center  Do not subtract 8192 when using --unsigned14\n"
         << "  --input-bin16           Read input as 16-bit little-endian signed samples\n"
         << "  --reset-samples <N>     Assert reset for first N samples (default: 0)\n";
 }
@@ -55,6 +57,8 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
             opt.threshold = std::strtoll(argv[++i], nullptr, 0);
         } else if (arg == "--unsigned14") {
             opt.unsigned14 = true;
+        } else if (arg == "--unsigned14-no-center") {
+            opt.no_center = true;
         } else if (arg == "--input-bin16") {
             opt.input_bin16 = true;
         } else if (arg == "--reset-samples" && i + 1 < argc) {
@@ -214,12 +218,17 @@ int main(int argc, char** argv) {
 
     if (opt.input_bin16) {
         while (true) {
-            int16_t v = 0;
-            in.read(reinterpret_cast<char*>(&v), sizeof(v));
+            uint16_t raw_u16 = 0;
+            in.read(reinterpret_cast<char*>(&raw_u16), sizeof(raw_u16));
             if (!in) break;
-            int sample = opt.unsigned14 ? ClampUnsigned14(static_cast<int64_t>(static_cast<uint16_t>(v)))
-                                        : ClampSigned14(v);
-            if (opt.unsigned14) sample -= 8192;
+            int sample = 0;
+            if (opt.unsigned14) {
+                sample = ClampUnsigned14(static_cast<int64_t>(raw_u16));
+                if (!opt.no_center) sample -= 8192;
+            } else {
+                int16_t v = static_cast<int16_t>(raw_u16);
+                sample = ClampSigned14(v);
+            }
 
             bool reset = index < opt.reset_samples;
             step(sample, reset);
@@ -235,7 +244,7 @@ int main(int argc, char** argv) {
             if (!(iss >> v)) continue;
 
             int sample = opt.unsigned14 ? ClampUnsigned14(v) : ClampSigned14(v);
-            if (opt.unsigned14) sample -= 8192;
+            if (opt.unsigned14 && !opt.no_center) sample -= 8192;
 
             bool reset = index < opt.reset_samples;
             step(sample, reset);

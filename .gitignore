@@ -6,3 +6,5 @@
 *.bin
 *.o
 __pycache__/
+sample_waveform.bin
+sample_waveform.txt
