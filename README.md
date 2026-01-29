@@ -102,6 +102,31 @@ Then run the sim:
 - The data path can be aligned with `--data-delay` (default 256 samples) to
   match the `stc3.vhd` delay chain.
 
+## Simulation vs VHDL (mapping)
+
+**1) Matched filter / cross-correlation**
+- **VHDL:** `rtl/selftrig/eia_selftrig/st_xc.vhd`
+- **C++:** `src/st_xc_sim.cpp` (`XCorrSim::UpdateFIR()` + `UpdateXCorrPipeline()`)
+- **Notes:** 32-tap template, transposed FIR, 2-cycle tap pipeline mirrored.
+
+**2) Trigger condition**
+- **VHDL:** `st_xc.vhd` trigger logic
+- **C++:** `XCorrSim::ShouldTrigger()`
+- **Logic:** fires when `xcorr > threshold` for two cycles and the previous cycle is `<= threshold`.
+
+**3) Frame assembly**
+- **VHDL:** `stc3.vhd` frame FSM
+- **C++:** `XCorrSim::UpdateFrame()`
+- **Behavior:** frame starts only on trigger, length 1024 samples, trigger at `frame_index = 64`, no overlapping frames.
+
+**4) Data delay alignment**
+- **VHDL:** `stc3.vhd` delay chain
+- **C++:** `raw_delayed` using `--data-delay` (default 256)
+- **Purpose:** aligns data with trigger/pretrigger latency.
+
+**Not modeled**
+- Ethernet packetization, FIFO depth, dense-packing format, multi-channel arbitration.
+
 ## Dependencies
 
 - C++17 compiler
