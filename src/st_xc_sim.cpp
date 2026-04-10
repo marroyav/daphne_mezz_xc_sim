@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -28,8 +29,13 @@ struct Options {
     bool input_bin16 = false;
     int baseline_sub = 0;
     bool auto_baseline = false;
+    bool fw_baseline_lpf = false;
+    bool xcorr_input_negate = false;
     bool xcorr_abs = false;
     bool xcorr_negate = false;
+    bool fw_cfd = false;
+    int fw_cfd_delay = 26;
+    int fw_cfd_sign = 0;
     int holdoff = 0;
     int frame_len = 1024;
     int pretrigger = 64;
@@ -41,12 +47,16 @@ struct Options {
 };
 
 struct SampleOut {
+    int baseline_lpf = 0;
+    int xcorr_input = 0;
     int64_t xcorr_raw = 0;
     int64_t xcorr_proc = 0;
     int raw_delayed = 0;
     int trigger = 0;
     int frame_start = 0;
     int frame_active = 0;
+    int frame_building = 0;
+    int frame_end = 0;
     int frame_index = 0;
     int frame_id = 0;
     int frame_trigger = 0;
@@ -76,9 +86,14 @@ void PrintUsage(const char* prog) {
         << "  --unsigned14-no-center  Do not subtract 8192 when using --unsigned14\n"
         << "  --input-bin16           Read input as 16-bit little-endian samples\n"
         << "  --baseline-sub <int>    Subtract baseline before filtering\n"
-        << "  --auto-baseline         Compute mean of input and use as baseline-sub\n"
+        << "  --auto-baseline         Compute whole-file mean and use as baseline-sub\n"
+        << "  --fw-baseline-lpf       Use firmware k_low_pass_filter baseline estimator\n"
+        << "  --xcorr-input-negate    Negate sample sign before FIR/xcorr path\n"
         << "  --xcorr-abs             Use absolute value of xcorr for trigger/output\n"
         << "  --xcorr-negate          Negate xcorr for trigger/output\n"
+        << "  --fw-cfd                Apply firmware-like CFD gate to threshold trigger\n"
+        << "  --fw-cfd-delay <0..31>  CFD delay taps (default: 26)\n"
+        << "  --fw-cfd-sign <0|1>     CFD sign mode: 0=pos, 1=neg (default: 0)\n"
         << "  --holdoff <N>           Suppress triggers for N samples after trigger\n"
         << "  --frame-len <N>         Frame length in samples (default: 1024)\n"
         << "  --pretrigger <N>        Pretrigger samples (default: 64)\n"
@@ -101,8 +116,13 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
         else if (arg == "--input-bin16") opt.input_bin16 = true;
         else if (arg == "--baseline-sub" && i + 1 < argc) opt.baseline_sub = std::atoi(argv[++i]);
         else if (arg == "--auto-baseline") opt.auto_baseline = true;
+        else if (arg == "--fw-baseline-lpf") opt.fw_baseline_lpf = true;
+        else if (arg == "--xcorr-input-negate") opt.xcorr_input_negate = true;
         else if (arg == "--xcorr-abs") opt.xcorr_abs = true;
         else if (arg == "--xcorr-negate") opt.xcorr_negate = true;
+        else if (arg == "--fw-cfd") opt.fw_cfd = true;
+        else if (arg == "--fw-cfd-delay" && i + 1 < argc) opt.fw_cfd_delay = std::atoi(argv[++i]);
+        else if (arg == "--fw-cfd-sign" && i + 1 < argc) opt.fw_cfd_sign = std::atoi(argv[++i]);
         else if (arg == "--holdoff" && i + 1 < argc) opt.holdoff = std::atoi(argv[++i]);
         else if (arg == "--frame-len" && i + 1 < argc) opt.frame_len = std::atoi(argv[++i]);
         else if (arg == "--pretrigger" && i + 1 < argc) opt.pretrigger = std::atoi(argv[++i]);
@@ -201,6 +221,75 @@ int ComputeBaseline(const std::vector<int>& samples) {
     for (int v : samples) sum += v;
     return static_cast<int>(sum / static_cast<int64_t>(samples.size()));
 }
+
+int16_t WrapSigned16(int32_t v) {
+    v &= 0xFFFF;
+    if (v & 0x8000) v -= 0x10000;
+    return static_cast<int16_t>(v);
+}
+
+int64_t WrapSigned(int64_t v, int bits) {
+    const uint64_t mask = (1ULL << bits) - 1ULL;
+    uint64_t wrapped = static_cast<uint64_t>(v) & mask;
+    const uint64_t sign_bit = 1ULL << (bits - 1);
+    if ((wrapped & sign_bit) != 0) wrapped -= (1ULL << bits);
+    return static_cast<int64_t>(wrapped);
+}
+
+class FirmwareBaselineLpfSim {
+public:
+    explicit FirmwareBaselineLpfSim(int init_baseline) : init_baseline_(WrapSigned16(init_baseline)) { Reset(); }
+
+    void Reset() {
+        reset_reg_ = false;
+        enable_reg_ = false;
+        in_reg_ = 0;
+        out_reg_ = init_baseline_;
+        x_1_ = static_cast<int64_t>(init_baseline_) << 32;
+        y_1_ = static_cast<int64_t>(init_baseline_) << 32;
+    }
+
+    int16_t output() const { return out_reg_; }
+
+    void Step(int sample, bool reset, bool enable) {
+        const bool reset_reg = reset_reg_;
+        const bool enable_reg = enable_reg_;
+
+        const int64_t w1 = WrapSigned(static_cast<int64_t>(in_reg_) << 32, 48);
+        const int64_t w2 = x_1_;
+        const int64_t w3 = WrapSigned(w1 + w2, 48);
+        const int64_t w4 = WrapSigned(w3 >> kShift_, 48);
+        const int64_t w5 = y_1_;
+        const int64_t w7 = WrapSigned(w5 >> (kShift_ - 1), 48);
+        const int64_t w6 = WrapSigned(w4 + w5 - w7, 48);
+
+        if (reset_reg) {
+            in_reg_ = 0;
+            out_reg_ = init_baseline_;
+            x_1_ = static_cast<int64_t>(init_baseline_) << 32;
+            y_1_ = static_cast<int64_t>(init_baseline_) << 32;
+        } else if (enable_reg) {
+            x_1_ = w1;
+            y_1_ = w6;
+            in_reg_ = WrapSigned16(sample);
+            out_reg_ = WrapSigned16(static_cast<int32_t>(WrapSigned(w6 >> 32, 16)));
+        }
+
+        reset_reg_ = reset;
+        enable_reg_ = enable;
+    }
+
+private:
+    static constexpr int kShift_ = 26;
+
+    const int16_t init_baseline_;
+    bool reset_reg_ = false;
+    bool enable_reg_ = false;
+    int16_t in_reg_ = 0;
+    int16_t out_reg_ = 0;
+    int64_t x_1_ = 0;
+    int64_t y_1_ = 0;
+};
 
 class CiematPeakDetector {
 public:
@@ -391,7 +480,7 @@ private:
 class CiematSim {
 public:
     explicit CiematSim(const Options& opt)
-        : opt_(opt), delay_(std::max(0, opt.ciemat_delay) + 1, 0) {
+        : opt_(opt), delay_(std::max(0, opt.ciemat_delay), 0) {
         SetConfig(opt.ciemat_config);
         Reset();
     }
@@ -416,9 +505,12 @@ public:
     }
 
     void Step(int16_t din, bool ext_trigger, bool match_with_frame, SampleOut& out) {
-        int16_t delayed = delay_[delay_pos_];
-        delay_[delay_pos_] = din;
-        delay_pos_ = (delay_pos_ + 1) % delay_.size();
+        int16_t delayed = din;
+        if (!delay_.empty()) {
+            delayed = delay_[delay_pos_];
+            delay_[delay_pos_] = din;
+            delay_pos_ = (delay_pos_ + 1) % delay_.size();
+        }
 
         bool sending_data = (sending_state_ == SendingState::Sending);
         bool ext_match = ext_trigger && (match_with_frame || sending_data);
@@ -499,38 +591,148 @@ private:
     int time_start_reg2_ = 0;
 };
 
+class ConfigurableCfdSim {
+public:
+    ConfigurableCfdSim(int delay_taps, int sign_mode) {
+        SetConfig(delay_taps, sign_mode);
+        Reset();
+    }
+
+    void SetConfig(int delay_taps, int sign_mode) {
+        delay_taps_ = std::clamp(delay_taps, 0, 31);
+        sign_mode_ = (sign_mode != 0);
+    }
+
+    void Reset() {
+        delay_line_.fill(0);
+        write_pos_ = 0;
+        din_reg_ = 0;
+        din_divided_reg_ = 0;
+        y_reg_ = 0;
+        y_sign_ = false;
+        y_sign_delay_ = false;
+        trigger_threshold_reg_ = false;
+        trigger_threshold_counter_ = 0;
+    }
+
+    int Step(int64_t din, bool trigger_threshold, bool reset, bool enable) {
+        if (reset) {
+            Reset();
+            return 0;
+        }
+
+        din_reg_ = WrapSigned28(din);
+
+        delay_line_[write_pos_] = din_reg_;
+        write_pos_ = (write_pos_ + 1) % delay_line_.size();
+        const size_t delay_idx =
+            (write_pos_ + delay_line_.size() - 1 - static_cast<size_t>(delay_taps_)) % delay_line_.size();
+        const int32_t din_delay = delay_line_[delay_idx];
+
+        din_divided_reg_ = WrapSigned28(static_cast<int64_t>(din_reg_) >> 1);
+        y_reg_ = WrapSigned28(static_cast<int64_t>(din_divided_reg_) - static_cast<int64_t>(din_delay));
+
+        y_sign_delay_ = y_sign_;
+        y_sign_ = (y_reg_ < 0);
+
+        const bool crossing =
+            ((!sign_mode_) && (!y_sign_delay_) && y_sign_) || (sign_mode_ && y_sign_delay_ && (!y_sign_));
+        const bool counter_gt4 = (trigger_threshold_counter_ & 0x7C) != 0;
+        const bool trigger_aux = trigger_threshold_reg_ && counter_gt4 && crossing;
+
+        if (enable) {
+            if (trigger_threshold) {
+                trigger_threshold_reg_ = true;
+            } else if (trigger_aux || trigger_threshold_counter_ > 100) {
+                trigger_threshold_reg_ = false;
+            }
+        } else {
+            trigger_threshold_reg_ = false;
+        }
+
+        if (trigger_threshold_reg_) {
+            trigger_threshold_counter_ = std::min(trigger_threshold_counter_ + 1, 127);
+        } else {
+            trigger_threshold_counter_ = 0;
+        }
+
+        return trigger_aux ? 1 : 0;
+    }
+
+private:
+    static int32_t WrapSigned28(int64_t v) {
+        v &= ((1LL << 28) - 1);
+        if (v & (1LL << 27)) v -= (1LL << 28);
+        return static_cast<int32_t>(v);
+    }
+
+    int delay_taps_ = 26;
+    bool sign_mode_ = false;
+    std::array<int32_t, 32> delay_line_{};
+    size_t write_pos_ = 0;
+    int32_t din_reg_ = 0;
+    int32_t din_divided_reg_ = 0;
+    int32_t y_reg_ = 0;
+    bool y_sign_ = false;
+    bool y_sign_delay_ = false;
+    bool trigger_threshold_reg_ = false;
+    int trigger_threshold_counter_ = 0;
+};
+
 class XCorrSim {
 public:
     XCorrSim(const Options& opt, const std::vector<int>& tmpl)
         : opt_(opt), tmpl_(tmpl),
           r_(kTaps + 1, 0), d0_(kTaps, 0), d1_(kTaps, 0),
-          raw_delay_(std::max(0, opt.data_delay) + 1, 0),
-          ciemat_(opt) {}
+          raw_delay_(std::max(0, opt.data_delay), 0),
+          baseline_lpf_(DefaultBaselineInit(opt)),
+          ciemat_(opt),
+          cfd_(opt.fw_cfd_delay, opt.fw_cfd_sign) {}
 
     SampleOut Step(int sample, bool reset) {
         SampleOut out;
+        out.baseline_lpf = opt_.fw_baseline_lpf ? baseline_lpf_.output() : 0;
+        int filter_sample = sample;
+        if (opt_.fw_baseline_lpf) {
+            filter_sample = ClampSigned14(static_cast<int64_t>(filter_sample) - out.baseline_lpf);
+        }
+        if (opt_.xcorr_input_negate) filter_sample = -filter_sample;
+        filter_sample = ClampSigned14(filter_sample);
+        out.xcorr_input = filter_sample;
         out.xcorr_raw = xcorr_;
         out.xcorr_proc = ApplyXCorrOps(xcorr_);
 
-        out.trigger = ShouldTrigger(out.xcorr_proc);
+        const int threshold_trigger = ShouldTrigger(out.xcorr_proc);
+        if (opt_.fw_cfd) {
+            out.trigger = cfd_.Step(out.xcorr_proc, threshold_trigger != 0, reset, true);
+        } else {
+            out.trigger = threshold_trigger;
+        }
         bool match_with_frame = !frame_active_;
         UpdateFrame(out.trigger, reset, out);
 
-        int ciemat_sample = sample;
+        int ciemat_sample = filter_sample;
         if (opt_.ciemat_invert) ciemat_sample = -ciemat_sample;
         ciemat_sample = ClampSigned14(ciemat_sample);
         ciemat_.Step(static_cast<int16_t>(ciemat_sample), out.trigger != 0, match_with_frame, out);
 
-        out.raw_delayed = raw_delay_[raw_delay_pos_];
-        raw_delay_[raw_delay_pos_] = sample;
-        raw_delay_pos_ = (raw_delay_pos_ + 1) % raw_delay_.size();
+        if (raw_delay_.empty()) {
+            out.raw_delayed = sample;
+        } else {
+            out.raw_delayed = raw_delay_[raw_delay_pos_];
+            raw_delay_[raw_delay_pos_] = sample;
+            raw_delay_pos_ = (raw_delay_pos_ + 1) % raw_delay_.size();
+        }
 
         if (reset) {
             ResetState();
             return out;
         }
 
-        UpdateFIR(sample);
+        if (opt_.fw_baseline_lpf) {
+            baseline_lpf_.Step(sample, reset, true);
+        }
+        UpdateFIR(filter_sample);
         UpdateXCorrPipeline();
 
         return out;
@@ -565,6 +767,8 @@ private:
             frame_index_ = 0;
             frame_id_ = 0;
             out.frame_active = 0;
+            out.frame_building = 0;
+            out.frame_end = 0;
             out.frame_index = 0;
             out.frame_id = 0;
             out.frame_start = 0;
@@ -574,6 +778,7 @@ private:
 
         out.frame_start = 0;
         out.frame_trigger = 0;
+        out.frame_end = 0;
 
         if (!frame_active_ && trigger) {
             frame_active_ = true;
@@ -582,6 +787,7 @@ private:
             out.frame_start = 1;
         } else if (frame_active_) {
             if (frame_index_ >= opt_.frame_len - 1) {
+                out.frame_end = 1;
                 frame_active_ = false;
                 frame_index_ = 0;
             } else {
@@ -592,6 +798,7 @@ private:
         if (frame_active_ && frame_index_ == opt_.pretrigger) out.frame_trigger = 1;
 
         out.frame_active = frame_active_ ? 1 : 0;
+        out.frame_building = out.frame_active;
         out.frame_index = frame_index_;
         out.frame_id = frame_id_;
     }
@@ -641,7 +848,13 @@ private:
         frame_active_ = false;
         frame_index_ = 0;
         frame_id_ = 0;
+        baseline_lpf_.Reset();
         ciemat_.Reset();
+        cfd_.Reset();
+    }
+
+    static int DefaultBaselineInit(const Options& opt) {
+        return (opt.unsigned14 && opt.no_center) ? 8192 : 0;
     }
 
     const Options& opt_;
@@ -664,7 +877,9 @@ private:
     std::vector<int> raw_delay_;
     size_t raw_delay_pos_ = 0;
 
+    FirmwareBaselineLpfSim baseline_lpf_;
     CiematSim ciemat_;
+    ConfigurableCfdSim cfd_;
 };
 
 } // namespace
@@ -696,6 +911,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (opt.fw_baseline_lpf && (opt.auto_baseline || opt.baseline_sub != 0)) {
+        std::cerr << "--fw-baseline-lpf cannot be combined with --auto-baseline or --baseline-sub\n";
+        return 1;
+    }
+
     if (opt.auto_baseline) opt.baseline_sub = ComputeBaseline(samples);
 
     const std::string csv_path = opt.out_prefix + ".csv";
@@ -712,7 +932,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    csv << "index,raw,raw_delayed,xcorr,xcorr_proc,trigger,frame_start,frame_active,frame_index,frame_id,frame_trigger,"
+    csv << "index,raw,raw_delayed,baseline_lpf,xcorr_input,xcorr,xcorr_proc,trigger,frame_start,frame_active,frame_building,frame_end,frame_index,frame_id,frame_trigger,"
            "desc_valid,desc_time_peak,desc_time_over,desc_peak,desc_charge,desc_charge_simple,desc_peak_count,desc_time_start,"
            "desc_peak_current,desc_slope_current,desc_detection,desc_sending,desc_info_previous\n";
 
@@ -724,9 +944,10 @@ int main(int argc, char** argv) {
         bool reset = index < opt.reset_samples;
         SampleOut out = sim.Step(sample, reset);
 
-        csv << index << "," << sample << "," << out.raw_delayed << "," << out.xcorr_raw << "," << out.xcorr_proc
-            << "," << out.trigger << "," << out.frame_start << "," << out.frame_active << "," << out.frame_index
-            << "," << out.frame_id << "," << out.frame_trigger
+        csv << index << "," << sample << "," << out.raw_delayed << "," << out.baseline_lpf << "," << out.xcorr_input
+            << "," << out.xcorr_raw << "," << out.xcorr_proc
+            << "," << out.trigger << "," << out.frame_start << "," << out.frame_active << "," << out.frame_building
+            << "," << out.frame_end << "," << out.frame_index << "," << out.frame_id << "," << out.frame_trigger
             << "," << out.desc_valid << "," << out.desc_time_peak << "," << out.desc_time_over
             << "," << out.desc_peak << "," << out.desc_charge << "," << out.desc_charge_simple << "," << out.desc_peak_count
             << "," << out.desc_time_start << "," << out.desc_peak_current << "," << out.desc_slope_current

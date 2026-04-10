@@ -45,6 +45,33 @@ If binary is unsigned 14-bit ADC counts in 16-bit words:
   --auto-baseline --xcorr-negate --holdoff 1024
 ```
 
+`--auto-baseline` is a convenience mode that subtracts one constant mean value
+computed over the whole input file. It is not the firmware baseline algorithm.
+
+To emulate the firmware `k_low_pass_filter` baseline tracker, use the dedicated
+LPF mode instead. With unsigned raw ADC words, keep the waveform uncentered so
+the emulator matches the RTL baseline initialization at mid-scale (`8192`):
+
+```sh
+./st_xc_sim --input waveform.bin --input-bin16 --unsigned14 --unsigned14-no-center \
+  --fw-baseline-lpf --xcorr-input-negate --threshold 5000 \
+  --out-prefix data/output/analysis/run1_lpf
+```
+
+To approximate the full firmware trigger path (`trig_xc` + `Configurable_CFD`),
+enable the CFD gate and (optionally) input-sign inversion used around
+`hpf_out_xcorr`:
+
+```sh
+./st_xc_sim --input waveform.bin --input-bin16 --unsigned14 --unsigned14-no-center \
+  --fw-baseline-lpf \
+  --threshold 5000 --fw-cfd --fw-cfd-delay 26 --fw-cfd-sign 0 \
+  --xcorr-input-negate \
+  --out-prefix data/output/analysis/run1_fw
+```
+
+If your firmware uses `invert_enable='1'`, drop `--xcorr-input-negate`.
+
 To force absolute-value correlation for positive-only triggering:
 
 ```sh
@@ -55,7 +82,8 @@ To emulate the CIEMAT peak-descriptor path with positive pulses, invert the
 signal before the descriptor logic:
 
 ```sh
-./st_xc_sim --input waveform.bin --input-bin16 --unsigned14 --auto-baseline \
+./st_xc_sim --input waveform.bin --input-bin16 --unsigned14 --unsigned14-no-center \
+  --fw-baseline-lpf \
   --xcorr-abs --threshold 2000 --data-delay 265 --ciemat-invert \
   --out-prefix data/output/analysis/run1
 ```
@@ -65,7 +93,7 @@ signal before the descriptor logic:
 Given `--out-prefix data/output/analysis/run1`:
 
 - `run1.csv` columns:
-  `index,raw,raw_delayed,xcorr,xcorr_proc,trigger,frame_start,frame_active,frame_index,frame_id,frame_trigger,`
+  `index,raw,raw_delayed,baseline_lpf,xcorr_input,xcorr,xcorr_proc,trigger,frame_start,frame_active,frame_building,frame_end,frame_index,frame_id,frame_trigger,`
   `desc_valid,desc_time_peak,desc_time_over,desc_peak,desc_charge,desc_charge_simple,desc_peak_count,`
   `desc_time_start,desc_peak_current,desc_slope_current,desc_detection,desc_sending,desc_info_previous`
 - `run1_raw.txt`
@@ -122,12 +150,23 @@ Then run the sim:
 - Models the transposed FIR with a 2-cycle pipeline per tap, matching the
   zero-coefficient path and the DSP48E2 default pipeline latency.
 - The trigger condition matches the RTL: `xcorr > threshold` for two cycles
-  with the previous cycle at or below the threshold.
+  with the previous cycle at or below the threshold (default mode).
+- Optional firmware baseline LPF mode is available with `--fw-baseline-lpf`.
+  It implements the RTL `k_low_pass_filter` recurrence rather than a fixed
+  whole-file mean subtraction.
+- Optional firmware-like CFD stage is available with `--fw-cfd` (default
+  delay 26, sign mode 0) to emulate `Configurable_CFD` gating in `trig_xc`.
 - The data path can be aligned with `--data-delay`. The VHDL delay is
   `256 + 9 = 265` samples (see `stc3.vhd`), so use `--data-delay 265` to match
   the default gateware alignment.
+- The delay knobs are exact sample counts in the emulator, so `--data-delay 265`
+  means a 265-sample output delay and `--ciemat-delay N` means an `N`-sample
+  descriptor-input delay.
 - CIEMAT descriptor emulation uses `--ciemat-config` (default `0x36CD`) and
   `--ciemat-delay` (default `176`) to match the VHDL pipeline staging.
+- The descriptor path now consumes the same filtered sample domain exported in
+  `xcorr_input`, rather than the raw ADC sample, so descriptor behavior tracks
+  the trigger/filter preprocessing more closely.
 
 ## Simulation vs VHDL (mapping)
 
