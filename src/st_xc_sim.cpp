@@ -29,6 +29,7 @@ struct Options {
     bool input_bin16 = false;
     int baseline_sub = 0;
     bool auto_baseline = false;
+    bool rtl_current = false;
     bool fw_baseline_lpf = false;
     bool xcorr_input_negate = false;
     bool xcorr_abs = false;
@@ -68,6 +69,7 @@ struct SampleOut {
     int desc_charge_simple = 0;
     int desc_peak_count = 0;
     int desc_time_start = 0;
+    int desc_time_start_full = 0;
     int desc_peak_current = 0;
     int desc_slope_current = 0;
     int desc_detection = 0;
@@ -87,6 +89,7 @@ void PrintUsage(const char* prog) {
         << "  --input-bin16           Read input as 16-bit little-endian samples\n"
         << "  --baseline-sub <int>    Subtract baseline before filtering\n"
         << "  --auto-baseline         Compute whole-file mean and use as baseline-sub\n"
+        << "  --rtl-current           Apply current RTL-aligned trigger/descriptor defaults\n"
         << "  --fw-baseline-lpf       Use firmware k_low_pass_filter baseline estimator\n"
         << "  --xcorr-input-negate    Negate sample sign before FIR/xcorr path\n"
         << "  --xcorr-abs             Use absolute value of xcorr for trigger/output\n"
@@ -116,6 +119,22 @@ bool ParseArgs(int argc, char** argv, Options& opt) {
         else if (arg == "--input-bin16") opt.input_bin16 = true;
         else if (arg == "--baseline-sub" && i + 1 < argc) opt.baseline_sub = std::atoi(argv[++i]);
         else if (arg == "--auto-baseline") opt.auto_baseline = true;
+        else if (arg == "--rtl-current") {
+            opt.rtl_current = true;
+            opt.fw_baseline_lpf = true;
+            opt.xcorr_input_negate = true;
+            opt.xcorr_abs = false;
+            opt.xcorr_negate = false;
+            opt.fw_cfd = true;
+            opt.fw_cfd_delay = 26;
+            opt.fw_cfd_sign = 0;
+            opt.holdoff = 0;
+            opt.pretrigger = 64;
+            opt.data_delay = 265;
+            opt.ciemat_config = 0x36CD;
+            opt.ciemat_delay = 176;
+            opt.ciemat_invert = false;
+        }
         else if (arg == "--fw-baseline-lpf") opt.fw_baseline_lpf = true;
         else if (arg == "--xcorr-input-negate") opt.xcorr_input_negate = true;
         else if (arg == "--xcorr-abs") opt.xcorr_abs = true;
@@ -480,7 +499,9 @@ private:
 class CiematSim {
 public:
     explicit CiematSim(const Options& opt)
-        : opt_(opt), delay_(std::max(0, opt.ciemat_delay), 0) {
+        : opt_(opt),
+          delay_(std::max(0, opt.ciemat_delay), 0),
+          frame_size_(std::max(0, opt.frame_len - opt.pretrigger)) {
         SetConfig(opt.ciemat_config);
         Reset();
     }
@@ -533,6 +554,7 @@ public:
         out.desc_charge_simple = local_primitives_.charge_simple();
         out.desc_peak_count = local_primitives_.num_peaks();
         out.desc_time_start = time_start_reg2_ & 0x3FF;
+        out.desc_time_start_full = time_start_reg2_;
         out.desc_peak_current = peak_detector_.peak_current() ? 1 : 0;
         out.desc_slope_current = static_cast<int>(peak_detector_.slope_current());
         out.desc_detection = local_primitives_.peak_detection() ? 1 : 0;
@@ -542,14 +564,13 @@ public:
 
 private:
     enum class SendingState { Not_Sending, Sending };
-    static constexpr int kFrameSize = 960;
 
     void UpdateSending(bool ext_trigger, bool match_with_frame) {
         SendingState next = sending_state_;
         if (sending_state_ == SendingState::Not_Sending) {
             next = (ext_trigger && match_with_frame) ? SendingState::Sending : SendingState::Not_Sending;
         } else {
-            next = (data_sent_count_ >= kFrameSize) ? SendingState::Not_Sending : SendingState::Sending;
+            next = (data_sent_count_ >= frame_size_) ? SendingState::Not_Sending : SendingState::Sending;
         }
 
         sending_state_ = next;
@@ -569,7 +590,7 @@ private:
     }
 
     void UpdateTimeStart(bool ext_match, bool data_available) {
-        int time_start_aux = data_sent_count_ + 64;
+        int time_start_aux = data_sent_count_ + opt_.pretrigger;
         if (data_available) {
             // Commit the pending start time for the descriptor emitted now
             // before capturing a new trigger that may begin in the same cycle.
@@ -585,6 +606,7 @@ private:
     const Options& opt_;
     uint16_t config14_ = 0;
     bool allow_previous_info_ = false;
+    int frame_size_ = 0;
     CiematPeakDetector peak_detector_;
     CiematLocalPrimitives local_primitives_;
     std::vector<int16_t> delay_;
@@ -938,7 +960,7 @@ int main(int argc, char** argv) {
     }
 
     csv << "index,raw,raw_delayed,baseline_lpf,xcorr_input,xcorr,xcorr_proc,trigger,frame_start,frame_active,frame_building,frame_end,frame_index,frame_id,frame_trigger,"
-           "desc_valid,desc_time_peak,desc_time_over,desc_peak,desc_charge,desc_charge_simple,desc_peak_count,desc_time_start,"
+           "desc_valid,desc_time_peak,desc_time_over,desc_peak,desc_charge,desc_charge_simple,desc_peak_count,desc_time_start,desc_time_start_full,"
            "desc_peak_current,desc_slope_current,desc_detection,desc_sending,desc_info_previous\n";
 
     XCorrSim sim(opt, tmpl);
@@ -955,7 +977,8 @@ int main(int argc, char** argv) {
             << "," << out.frame_end << "," << out.frame_index << "," << out.frame_id << "," << out.frame_trigger
             << "," << out.desc_valid << "," << out.desc_time_peak << "," << out.desc_time_over
             << "," << out.desc_peak << "," << out.desc_charge << "," << out.desc_charge_simple << "," << out.desc_peak_count
-            << "," << out.desc_time_start << "," << out.desc_peak_current << "," << out.desc_slope_current
+            << "," << out.desc_time_start << "," << out.desc_time_start_full
+            << "," << out.desc_peak_current << "," << out.desc_slope_current
             << "," << out.desc_detection << "," << out.desc_sending << "," << out.desc_info_previous << "\n";
         raw_out << sample << "\n";
         xcorr_out << out.xcorr_proc << "\n";
