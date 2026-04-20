@@ -570,10 +570,15 @@ private:
 
     void UpdateTimeStart(bool ext_match, bool data_available) {
         int time_start_aux = data_sent_count_ + 64;
+        if (data_available) {
+            // Commit the pending start time for the descriptor emitted now
+            // before capturing a new trigger that may begin in the same cycle.
+            // The old if/else-if ordering reused stale sample_start values
+            // across back-to-back descriptors.
+            time_start_reg2_ = time_start_reg_;
+        }
         if (ext_match) {
             time_start_reg_ = time_start_aux;
-        } else if (data_available) {
-            time_start_reg2_ = time_start_reg_;
         }
     }
 
