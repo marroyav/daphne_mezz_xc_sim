@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from matplotlib.ticker import MultipleLocator
 
@@ -22,7 +23,7 @@ def parse_args():
     )
     parser.add_argument(
         "--style",
-        choices=["editorial", "classic"],
+        choices=["editorial", "classic", "noir"],
         default="editorial",
         help="Visual style profile for the figure.",
     )
@@ -31,6 +32,17 @@ def parse_args():
         choices=["default", "jetbrains"],
         default="default",
         help="Font profile for figure text.",
+    )
+    parser.add_argument(
+        "--reference-rate-hz",
+        type=float,
+        default=0.0,
+        help="Optional operating-point marker in Hz/channel.",
+    )
+    parser.add_argument(
+        "--reference-label",
+        default="FD-HD reference",
+        help="Label used for the operating-point marker.",
     )
     return parser.parse_args()
 
@@ -54,12 +66,34 @@ def main():
 
     if args.style == "classic":
         accent_color = "#111111"
-        dark_gray = "#111111"
-        mid_gray = "#111111"
+        model_color = "#111111"
+        mid_color = "#111111"
+        text_color = "#111111"
+        figure_color = "white"
+        axes_color = "white"
+        grid_color = "#d8d8d8"
+        reference_color = "#4c78a8"
+        marker_face = "white"
+    elif args.style == "noir":
+        accent_color = "#F2682B"
+        model_color = "#92DDF2"
+        mid_color = "#C4CDD5"
+        text_color = "#ECF1F4"
+        figure_color = "#131B24"
+        axes_color = "#1C2834"
+        grid_color = "#556779"
+        reference_color = "#96D6AE"
+        marker_face = "#1C2834"
     else:
         accent_color = "#4c78a8"
-        dark_gray = "#202020"
-        mid_gray = "#6a6a6a"
+        model_color = "#202020"
+        mid_color = "#6a6a6a"
+        text_color = "#202020"
+        figure_color = "white"
+        axes_color = "white"
+        grid_color = "#d8d8d8"
+        reference_color = "#B279A2"
+        marker_face = "white"
 
     if args.font_profile == "jetbrains":
         font_family = "monospace"
@@ -92,8 +126,14 @@ def main():
         "ytick.major.size": 3.0,
         "xtick.minor.size": 1.8,
         "ytick.minor.size": 1.8,
-        "savefig.facecolor": "white",
-        "figure.facecolor": "white",
+        "savefig.facecolor": figure_color,
+        "figure.facecolor": figure_color,
+        "axes.facecolor": axes_color,
+        "text.color": text_color,
+        "axes.labelcolor": text_color,
+        "axes.edgecolor": mid_color,
+        "xtick.color": mid_color,
+        "ytick.color": mid_color,
     }
     if args.style == "classic":
         rc_updates.update(
@@ -119,6 +159,8 @@ def main():
 
     if args.style == "classic":
         fig, ax = plt.subplots(figsize=(4.15, 3.0), constrained_layout=True)
+    elif args.style == "noir":
+        fig, ax = plt.subplots(figsize=(4.7, 3.0), constrained_layout=True)
     else:
         # Nature single-column width is ~89 mm; keep the panel close to that scale.
         fig, ax = plt.subplots(figsize=(3.5, 2.5), constrained_layout=True)
@@ -132,7 +174,7 @@ def main():
     ax.plot(
         nominal_x,
         nominal_y,
-        color=dark_gray,
+        color=model_color,
         linewidth=1.55 if args.style == "classic" else 1.45,
         solid_capstyle="round",
         zorder=2,
@@ -145,7 +187,7 @@ def main():
         linestyle="none",
         marker="o" if args.style == "editorial" else "s",
         markersize=4.2 if args.style == "editorial" else 3.8,
-        markerfacecolor="white",
+        markerfacecolor=marker_face,
         markeredgecolor=accent_color,
         markeredgewidth=1.0,
         ecolor=accent_color,
@@ -157,7 +199,7 @@ def main():
     lane_x = args.lane_ceiling_hz / 1.0e3
     ax.axvline(
         lane_x,
-        color=mid_gray,
+        color=mid_color,
         linestyle="--",
         linewidth=0.75,
         dashes=(3, 3),
@@ -167,6 +209,7 @@ def main():
     ax.set_xlabel("Per-channel trigger rate (kHz)")
     ax.set_ylabel("Dead time (%)")
     ax.set_axisbelow(True)
+    ax.grid(axis="y", color=grid_color, linewidth=0.55, alpha=0.35)
     ax.xaxis.set_major_locator(MultipleLocator(2.0))
     ax.xaxis.set_minor_locator(MultipleLocator(1.0))
     ax.yaxis.set_major_locator(MultipleLocator(5.0))
@@ -179,7 +222,7 @@ def main():
         transform=ax.transAxes,
         ha="left",
         va="top",
-        color=mid_gray,
+        color=mid_color,
         fontsize=6.8,
     )
 
@@ -203,7 +246,7 @@ def main():
             [key_x0, key_x1],
             [key_y_model, key_y_model],
             transform=ax.transAxes,
-            color=dark_gray,
+            color=model_color,
             linewidth=1.55,
             solid_capstyle="round",
             clip_on=False,
@@ -213,7 +256,7 @@ def main():
             key_y_model,
             "stochastic model",
             transform=ax.transAxes,
-            color=dark_gray,
+            color=text_color,
             fontsize=7.2,
             ha="left",
             va="center",
@@ -226,7 +269,7 @@ def main():
             linestyle="none",
             marker="s",
             markersize=4.0,
-            markerfacecolor="white",
+            markerfacecolor=marker_face,
             markeredgecolor=accent_color,
             markeredgewidth=1.0,
             clip_on=False,
@@ -236,7 +279,7 @@ def main():
             key_y_hdl,
             "HDL bench",
             transform=ax.transAxes,
-            color=dark_gray,
+            color=text_color,
             fontsize=7.2,
             ha="left",
             va="center",
@@ -252,7 +295,7 @@ def main():
             [key_x0, key_x1],
             [key_y_model, key_y_model],
             transform=ax.transAxes,
-            color=dark_gray,
+            color=model_color,
             linewidth=1.45,
             solid_capstyle="round",
             clip_on=False,
@@ -262,7 +305,7 @@ def main():
             key_y_model,
             "Stochastic model",
             transform=ax.transAxes,
-            color=dark_gray,
+            color=text_color,
             fontsize=7.0,
             ha="left",
             va="center",
@@ -275,7 +318,7 @@ def main():
             linestyle="none",
             marker="o",
             markersize=4.2,
-            markerfacecolor="white",
+            markerfacecolor=marker_face,
             markeredgecolor=accent_color,
             markeredgewidth=1.0,
             clip_on=False,
@@ -285,7 +328,7 @@ def main():
             key_y_hdl,
             "HDL bench",
             transform=ax.transAxes,
-            color=dark_gray,
+            color=text_color,
             fontsize=7.0,
             ha="left",
             va="center",
@@ -294,13 +337,59 @@ def main():
     ax.text(
         lane_x + 0.06,
         ax.get_ylim()[1] * 0.97,
-        "Lane ceiling",
+        "Hermes-input ceiling",
         rotation=90,
-        color=mid_gray,
+        color=mid_color,
         fontsize=6.8,
         ha="left",
         va="top",
     )
+
+    if args.reference_rate_hz > 0.0:
+        ref_x = args.reference_rate_hz / 1.0e3
+        ref_y = float(np.interp(args.reference_rate_hz, nominal["rate_hz_per_channel"], nominal_y))
+        ax.axvline(
+            ref_x,
+            color=reference_color,
+            linestyle=":",
+            linewidth=1.0,
+            dashes=(1.5, 2.5),
+            zorder=1,
+        )
+        ax.scatter(
+            [ref_x],
+            [ref_y],
+            s=28,
+            facecolors=reference_color,
+            edgecolors=figure_color if args.style == "noir" else "white",
+            linewidths=0.8,
+            zorder=5,
+        )
+        if args.style == "noir":
+            bbox_face = "#2A3948"
+        else:
+            bbox_face = "white"
+        ax.annotate(
+            f"{args.reference_label}\n{ref_x:.1f} kHz/ch\n{ref_y:.1f}% dead time",
+            xy=(ref_x, ref_y),
+            xytext=(ref_x + 1.05, ref_y + 5.2),
+            ha="left",
+            va="bottom",
+            fontsize=6.8,
+            color=text_color,
+            bbox={
+                "boxstyle": "round,pad=0.28",
+                "facecolor": bbox_face,
+                "edgecolor": reference_color,
+                "linewidth": 0.8,
+            },
+            arrowprops={
+                "arrowstyle": "-",
+                "color": reference_color,
+                "linewidth": 0.9,
+            },
+            zorder=6,
+        )
 
     out_prefix = Path(args.out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)

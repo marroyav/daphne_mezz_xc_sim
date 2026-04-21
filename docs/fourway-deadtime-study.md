@@ -84,7 +84,7 @@ This is represented in the C++ model with:
 
 ### `512 + ring0`
 
-This matches the current ring-builder architecture with:
+This matches the ring-builder candidate architecture under study with:
 
 - frame length = `512`
 - ring depth = `2048`
@@ -183,6 +183,7 @@ Representative points from the dense sweep:
 | rate [Hz/ch] | `1024 waveform` [%] | `512 waveform` [%] | `512 + ring0` [%] | `512 + ring50` [%] |
 |---:|---:|---:|---:|---:|
 | `1032`  | `2.23` | `1.14` | `1.14` | `0.46` |
+| `4600`  | `7.47` | `4.22` | `4.21` | `2.61` |
 | `5025`  | `7.57` | `4.08` | `4.21` | `2.42` |
 | `10017` | `16.29` | `9.26` | `8.80` | `5.31` |
 | `14010` | `23.70` | `12.47` | `11.92` | `7.44` |
@@ -202,7 +203,7 @@ Examples:
 
 So the waveform-length reduction is still the biggest single lever.
 
-### 2. `512 + ring0` is only a modest improvement over plain `512`
+### 2. `512 + ring0` is at best a modest improvement over plain `512`
 
 That is expected.
 
@@ -211,11 +212,14 @@ does not fundamentally relax the spacing policy.
 
 Examples:
 
+- at the FD-HD point around `4.6 kHz/ch`: `4.22% -> 4.21%`
+- around `5 kHz/ch`: `4.08% -> 4.21%`
 - around `10 kHz/ch`: `9.26% -> 8.80%`
 - around `14 kHz/ch`: `12.47% -> 11.92%`
 - at `20 kHz/ch`: `17.74% -> 16.67%`
 
-So `ring0` helps, but it does not change the regime dramatically.
+So `ring0` is essentially neutral at the FD-HD point and only becomes a modest
+improvement as the rate rises. It does not change the regime dramatically.
 
 ### 3. `512 + ring50` is the strongest architecture of the four
 
