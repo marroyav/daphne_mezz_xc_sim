@@ -202,7 +202,254 @@ Then run the sim:
 **Not modeled**
 - Ethernet packetization, FIFO depth, dense-packing format, multi-channel arbitration.
 
+## Nominal dead-time scan versus trigger rate
+
+The waveform emulator above does not model the shared multi-channel drain path.
+For a nominal rate scan derived from the current RTL builder + round-robin
+readout rules, use:
+
+```sh
+python3 scripts/sim_nominal_deadtime.py \
+  --rate-start 1000 \
+  --rate-stop 20000 \
+  --points 12
+```
+
+This script uses the current gateware constants:
+
+- builder busy time from `stc3_record_builder.vhd`
+- record size from the same builder FSM
+- round-robin service from `two_lane_readout_mux.vhd`
+- homogeneous trigger arrivals across the 20 channels sharing one output lane
+
+The output table reports:
+
+- accepted trigger rate per channel
+- total dead-time fraction
+- split between builder-busy drops and FIFO-full drops
+
+It is still a stochastic queueing model, not a waveform-accurate HDL testbench,
+but it is the right level for a nominal dead-time-versus-rate study.
+
+### Bursty arrival studies from empirical event spacings
+
+The default nominal scan assumes Poisson arrivals. That is useful as a baseline,
+ but it is not the right model for shower-like or track-clustered activity.
+
+The same script can instead drive each channel with an empirical renewal
+process built from inter-arrival spacings, for example from CORSIKA-derived
+event spacings:
+
+```sh
+python3 scripts/sim_nominal_deadtime.py \
+  --arrival-mode empirical \
+  --interarrival-file data/corsika_interarrival_us.txt \
+  --interarrival-unit us \
+  --rate-start 1000 \
+  --rate-stop 14000 \
+  --points 20 \
+  --csv-out data/output/analysis/deadtime_empirical.csv
+```
+
+Notes:
+
+- the empirical spacing file may contain either:
+  - one inter-arrival sample per line, or
+  - CSV data with a selected column via `--interarrival-column`
+- if you already have absolute event timestamps instead of spacings, use:
+  - `--interarrival-format timestamp`
+- the script rescales the empirical spacing distribution to the target nominal
+  rate for each scan point, preserving burst structure while changing the mean
+  rate
+
+Current limitation:
+
+- this empirical mode keeps channels statistically identical and independent
+  except for sharing the same spacing distribution
+- it does **not** yet model cross-channel correlation from a single shower
+  lighting up many channels at the same time
+
+So this mode answers:
+
+- "what happens if each channel has the same nominal rate, but arrivals are
+  bursty instead of Poisson?"
+
+It does not yet answer:
+
+- "what happens if one physical shower produces correlated trigger bursts across
+  many channels at once?"
+
 ## Dependencies
 
 - C++17 compiler
 - Python 3 + plotly (for interactive plots)
+- `ghdl` for the HDL multichannel dead-time bench
+
+## HDL multichannel dead-time bench
+
+The C++ emulator models the trigger/filter path, but it still does not model
+the shared lane drain in RTL. For a real HDL bench around the current
+`stc3_record_builder` plus `two_lane_readout_mux`, build:
+
+```sh
+make deadtime_tb
+```
+
+Run one rate point:
+
+```sh
+ghdl -r --std=08 multichannel_deadtime_tb -gTRIGGER_RATE_HZ_G=5000
+```
+
+Run a sweep:
+
+```sh
+python3 scripts/run_multichannel_deadtime_tb.py \
+  --rate-start 1000 \
+  --rate-stop 20000 \
+  --points 8 \
+  --repeats 3 \
+  --jobs 4 \
+  --csv-out data/output/analysis/deadtime_hdl_summary.csv \
+  --raw-csv-out data/output/analysis/deadtime_hdl_raw.csv
+```
+
+The runner builds the bench once, then fans out the rate points in parallel
+with isolated temporary run directories. Use `--jobs` to control concurrency.
+For publication-style comparisons, keep `--repeats` above `1` so the summary
+CSV contains a mean dead-time point and a run-to-run spread.
+
+The defaults are chosen for a more stable comparison than a smoke test:
+
+- `--warmup-cycles 20000`
+- `--measure-cycles 200000`
+- `--repeats 3`
+
+For a denser scan, increase the rate points and keep the HDL bench parallelized
+through `--jobs`.
+
+The bench uses:
+
+- the real `stc3_record_builder.vhd`
+- the real `two_lane_readout_mux.vhd`
+- a bench-local `sync_fifo_fwft` simulation model so GHDL can run the design
+  without XPM libraries
+
+To compare alternate firmware trees against the same bench, point the runner at
+another checkout:
+
+```sh
+python3 scripts/run_multichannel_deadtime_tb.py \
+  --firmware-root ../daphne-firmware-bram \
+  --rate-list 1000,3000,5000,7000,9000,11000,13000 \
+  --repeats 3 \
+  --jobs 4 \
+  --csv-out data/output/analysis/deadtime_hdl_ring_summary.csv \
+  --raw-csv-out data/output/analysis/deadtime_hdl_ring_raw.csv
+```
+
+The runner auto-detects whether the builder RTL uses the baseline or ring
+interface and selects the matching testbench wrapper. For apples-to-apples
+dead-time comparison against the previous study, keep the ring branch at zero
+overlap unless you explicitly want to study the overlap policy itself.
+
+To study overlap on the ring builder, pass `--signal-delay-steps`. The current
+RTL interprets this as `16` samples per step, so `--signal-delay-steps 16`
+corresponds to `256` samples of overlap, i.e. `50%` overlap for a `512`-sample
+frame.
+
+It prints a `RESULT ...` line containing:
+
+- total generated triggers
+- total accepted records
+- total sent records
+- total busy/full diagnostic counters
+- dead fraction in ppm
+
+## Compare two HDL branches
+
+When you have two HDL summary CSVs from `scripts/run_multichannel_deadtime_tb.py`,
+you can compare them directly with:
+
+```sh
+python3 scripts/plot_deadtime_branch_compare.py \
+  --baseline-csv data/output/analysis/deadtime_hdl_baseline_40pt.csv \
+  --ring-csv data/output/analysis/deadtime_hdl_ring_40pt.csv \
+  --out-prefix data/output/plots/deadtime_branch_compare_40pt \
+  --csv-out data/output/analysis/deadtime_branch_compare_40pt.csv
+```
+
+The script produces:
+
+- a main comparison figure with total dead time and busy/full components
+- a delta figure with `ring - baseline` differences in percentage points
+
+If the two sweeps do not use the same rate grid, the script aligns them on the
+union of both grids and interpolates each branch within its covered range.
+
+## Three-way comparison: baseline, ring0, ring50
+
+For the ring-builder study, the most useful combined view is baseline versus
+ring with zero overlap versus ring with `50%` overlap. Generate it with:
+
+```sh
+python3 scripts/plot_deadtime_threeway_compare.py \
+  --baseline-csv data/output/analysis/deadtime_hdl_fixed_20pt.csv \
+  --ring0-csv data/output/analysis/deadtime_hdl_ring_20pt.csv \
+  --ring50-csv data/output/analysis/deadtime_hdl_ring50_20pt.csv \
+  --out-prefix data/output/plots/deadtime_threeway_compare_20pt \
+  --csv-out data/output/analysis/deadtime_threeway_compare_20pt.csv
+```
+
+This produces:
+
+- `data/output/plots/deadtime_threeway_compare_20pt.png`
+- `data/output/plots/deadtime_threeway_compare_20pt.pdf`
+- `data/output/analysis/deadtime_threeway_compare_20pt.csv`
+
+The full study note is in:
+
+- [`docs/ring-deadtime-study.md`](docs/ring-deadtime-study.md)
+
+## Publication plot: stochastic model versus HDL bench
+
+Generate the dense nominal-model curve:
+
+```sh
+python3 scripts/sim_nominal_deadtime.py \
+  --rate-start 1000 \
+  --rate-stop 14000 \
+  --points 100 \
+  --csv-out data/output/analysis/deadtime_nominal.csv
+```
+
+Generate the HDL comparison points:
+
+```sh
+python3 scripts/run_multichannel_deadtime_tb.py \
+  --rate-list 1000,3000,5000,7000,9000,11000,13000 \
+  --repeats 3 \
+  --jobs 4 \
+  --csv-out data/output/analysis/deadtime_hdl_summary.csv \
+  --raw-csv-out data/output/analysis/deadtime_hdl_raw.csv
+```
+
+Render the comparison figure:
+
+```sh
+python3 scripts/plot_deadtime_vs_rate.py \
+  --nominal-csv data/output/analysis/deadtime_nominal.csv \
+  --hdl-csv data/output/analysis/deadtime_hdl_summary.csv \
+  --out-prefix data/output/plots/deadtime_vs_rate_daphne
+```
+
+This produces:
+
+- `data/output/plots/deadtime_vs_rate_daphne.png`
+- `data/output/plots/deadtime_vs_rate_daphne.pdf`
+
+The figure overlays:
+
+- a dense stochastic queueing-model curve
+- HDL multichannel bench points with mean ± `1σ`
+- the nominal fair-share lane ceiling marker
