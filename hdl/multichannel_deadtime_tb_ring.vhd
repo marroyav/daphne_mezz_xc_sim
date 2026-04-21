@@ -37,6 +37,10 @@ architecture tb of multichannel_deadtime_tb is
   signal record_count_s      : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
   signal full_count_s        : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
   signal busy_count_s        : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
+  signal spacing_reject_count_s : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
+  signal queue_reject_count_s   : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
+  signal ring_reject_count_s    : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
+  signal output_reject_count_s  : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
   signal trigger_count_s     : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
   signal packet_count_s      : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
   signal delayed_sample_s    : sample14_array_t(0 to CHANNEL_COUNT_G - 1);
@@ -75,6 +79,10 @@ begin
         record_count_o      => record_count_s(ch),
         full_count_o        => full_count_s(ch),
         busy_count_o        => busy_count_s(ch),
+        spacing_reject_count_o => spacing_reject_count_s(ch),
+        queue_reject_count_o   => queue_reject_count_s(ch),
+        ring_reject_count_o    => ring_reject_count_s(ch),
+        output_reject_count_o  => output_reject_count_s(ch),
         trigger_count_o     => trigger_count_s(ch),
         packet_count_o      => packet_count_s(ch),
         delayed_sample_o    => delayed_sample_s(ch),
@@ -110,6 +118,10 @@ begin
     variable packet0_v   : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
     variable busy0_v     : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
     variable full0_v     : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
+    variable spacing0_v  : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
+    variable queue0_v    : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
+    variable ring0_v     : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
+    variable output0_v   : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
     variable cyc_v       : natural := 0;
     variable measure_lo_v : natural := RESET_CYCLES_G + WARMUP_CYCLES_G;
     variable measure_hi_v : natural := RESET_CYCLES_G + WARMUP_CYCLES_G + MEASURE_CYCLES_G;
@@ -120,6 +132,10 @@ begin
     variable sum_record_v    : natural;
     variable sum_busy_v      : natural;
     variable sum_full_v      : natural;
+    variable sum_spacing_v   : natural;
+    variable sum_queue_v     : natural;
+    variable sum_ring_v      : natural;
+    variable sum_output_v    : natural;
     variable sum_sent_v      : natural;
     variable avg_generated_v : natural;
     variable avg_record_v    : natural;
@@ -180,6 +196,10 @@ begin
           packet0_v(ch) := slv64_to_nat(packet_count_s(ch));
           busy0_v(ch)   := slv64_to_nat(busy_count_s(ch));
           full0_v(ch)   := slv64_to_nat(full_count_s(ch));
+          spacing0_v(ch) := slv64_to_nat(spacing_reject_count_s(ch));
+          queue0_v(ch)   := slv64_to_nat(queue_reject_count_s(ch));
+          ring0_v(ch)    := slv64_to_nat(ring_reject_count_s(ch));
+          output0_v(ch)  := slv64_to_nat(output_reject_count_s(ch));
         end loop;
       end if;
 
@@ -196,6 +216,10 @@ begin
     sum_record_v := 0;
     sum_busy_v := 0;
     sum_full_v := 0;
+    sum_spacing_v := 0;
+    sum_queue_v := 0;
+    sum_ring_v := 0;
+    sum_output_v := 0;
     sum_sent_v := 0;
 
     for ch in 0 to CHANNEL_COUNT_G - 1 loop
@@ -203,6 +227,10 @@ begin
       sum_record_v := sum_record_v + (slv64_to_nat(packet_count_s(ch)) - packet0_v(ch));
       sum_busy_v := sum_busy_v + (slv64_to_nat(busy_count_s(ch)) - busy0_v(ch));
       sum_full_v := sum_full_v + (slv64_to_nat(full_count_s(ch)) - full0_v(ch));
+      sum_spacing_v := sum_spacing_v + (slv64_to_nat(spacing_reject_count_s(ch)) - spacing0_v(ch));
+      sum_queue_v := sum_queue_v + (slv64_to_nat(queue_reject_count_s(ch)) - queue0_v(ch));
+      sum_ring_v := sum_ring_v + (slv64_to_nat(ring_reject_count_s(ch)) - ring0_v(ch));
+      sum_output_v := sum_output_v + (slv64_to_nat(output_reject_count_s(ch)) - output0_v(ch));
     end loop;
 
     for lane in 0 to LANE_COUNT_G - 1 loop
@@ -238,6 +266,14 @@ begin
     write(line_v, sum_busy_v);
     write(line_v, string'(" full_counter_total="));
     write(line_v, sum_full_v);
+    write(line_v, string'(" spacing_counter_total="));
+    write(line_v, sum_spacing_v);
+    write(line_v, string'(" queue_counter_total="));
+    write(line_v, sum_queue_v);
+    write(line_v, string'(" ring_counter_total="));
+    write(line_v, sum_ring_v);
+    write(line_v, string'(" output_counter_total="));
+    write(line_v, sum_output_v);
     write(line_v, string'(" avg_generated_per_channel="));
     write(line_v, avg_generated_v);
     write(line_v, string'(" avg_accepted_per_channel="));

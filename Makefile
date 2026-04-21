@@ -17,9 +17,12 @@ GHDL_SRCS = \
 	$(DAPHNE_FIRMWARE_ROOT)/rtl/isolated/subsystems/readout/two_lane_readout_mux.vhd \
 	$(DEADTIME_TB_SRC)
 
-all: st_xc_sim
+all: st_xc_sim ring_deadtime_sim
 
 st_xc_sim: src/st_xc_sim.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+ring_deadtime_sim: src/ring_deadtime_sim.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 deadtime_tb:
@@ -32,4 +35,4 @@ run-deadtime-tb: deadtime_tb
 	$(GHDL) -r --std=08 multichannel_deadtime_tb
 
 clean:
-	rm -f st_xc_sim multichannel_deadtime_tb work-obj08.cf xpm-obj08.cf
+	rm -f st_xc_sim ring_deadtime_sim multichannel_deadtime_tb work-obj08.cf xpm-obj08.cf

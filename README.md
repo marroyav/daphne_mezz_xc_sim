@@ -231,6 +231,126 @@ The output table reports:
 It is still a stochastic queueing model, not a waveform-accurate HDL testbench,
 but it is the right level for a nominal dead-time-versus-rate study.
 
+## C++ stochastic ring model
+
+For the current ring-buffer builder, there is now a separate stochastic C++
+model that mirrors the HDL-side acceptance gates:
+
+- spacing reject
+- queue-full reject
+- ring-safe reject
+- output-full reject
+
+Build it with:
+
+```sh
+make ring_deadtime_sim
+```
+
+Run a sweep aligned with the HDL bench defaults:
+
+```sh
+./ring_deadtime_sim \
+  --rate-start 1000 \
+  --rate-stop 14000 \
+  --points 20 \
+  --repeats 3 \
+  --warmup-cycles 20000 \
+  --measure-cycles 200000 \
+  --signal-delay-steps 0 \
+  --csv-out data/output/analysis/deadtime_ring_cpp_summary.csv \
+  --raw-csv-out data/output/analysis/deadtime_ring_cpp_raw.csv
+```
+
+For `50%` overlap on the current `512`-sample frame:
+
+```sh
+./ring_deadtime_sim \
+  --rate-start 1000 \
+  --rate-stop 14000 \
+  --points 20 \
+  --repeats 3 \
+  --warmup-cycles 20000 \
+  --measure-cycles 200000 \
+  --signal-delay-steps 16 \
+  --csv-out data/output/analysis/deadtime_ring_cpp50_summary.csv \
+  --raw-csv-out data/output/analysis/deadtime_ring_cpp50_raw.csv
+```
+
+The summary CSV is intentionally shaped like the HDL summary CSV from
+`scripts/run_multichannel_deadtime_tb.py`, including:
+
+- `dead_fraction_mean/std`
+- `accepted_total_mean/std`
+- `sent_total_mean/std`
+- `busy_counter_total_mean/std`
+- `full_counter_total_mean/std`
+- `spacing_counter_total_mean/std`
+- `queue_counter_total_mean/std`
+- `ring_counter_total_mean/std`
+- `output_counter_total_mean/std`
+
+So you can compare the stochastic model directly against HDL outputs with the
+existing comparison scripts.
+
+Example, compare the C++ ring model against an HDL ring sweep:
+
+```sh
+python3 scripts/plot_deadtime_branch_compare.py \
+  --baseline-csv data/output/analysis/deadtime_ring_cpp_summary.csv \
+  --ring-csv data/output/analysis/deadtime_hdl_ring_summary.csv \
+  --baseline-label "cpp model" \
+  --ring-label "hdl bench" \
+  --out-prefix data/output/plots/deadtime_cpp_vs_hdl_ring
+```
+
+## Four-way architecture comparison
+
+To compare:
+
+- `1024` waveform
+- `512` waveform
+- `512 + ring0`
+- `512 + ring50`
+
+across the full rate spectrum with one command:
+
+```sh
+python3 scripts/run_deadtime_fourway_compare.py
+```
+
+By default this generates a dense sweep from `200 Hz/ch` to `20 kHz/ch` and
+writes:
+
+- `data/output/analysis/deadtime_arch_1024_cpp.csv`
+- `data/output/analysis/deadtime_arch_512_cpp.csv`
+- `data/output/analysis/deadtime_arch_512_ring0_cpp.csv`
+- `data/output/analysis/deadtime_arch_512_ring50_cpp.csv`
+- `data/output/plots/deadtime_arch_fourway_cpp.png`
+- `data/output/plots/deadtime_arch_fourway_cpp.pdf`
+
+The deep study note for that comparison is:
+
+- [`docs/fourway-deadtime-study.md`](docs/fourway-deadtime-study.md)
+
+You can override the scan density and window with:
+
+```sh
+python3 scripts/run_deadtime_fourway_compare.py \
+  --rate-start 200 \
+  --rate-stop 20000 \
+  --points 120 \
+  --repeats 5
+```
+
+Important limitation:
+
+- this C++ model is event-driven and intentionally coarser than the HDL bench
+- it models serializer completion at record granularity, not per-word FIFO write
+  timing inside the serializer
+- use it to sweep quickly and identify dominant reject causes, not as a
+  replacement for the HDL bench
+
 ### Bursty arrival studies from empirical event spacings
 
 The default nominal scan assumes Poisson arrivals. That is useful as a baseline,

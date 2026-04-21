@@ -51,6 +51,11 @@ def parse_args():
         default=0,
         help="Ring-builder overlap control in 16-sample steps. Ignored for baseline.",
     )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="Reuse an already elaborated multichannel_deadtime_tb executable.",
+    )
     return parser.parse_args()
 
 
@@ -145,23 +150,36 @@ def summarise(rows):
         sent_values = [sample["sent_total"] for sample in samples]
         busy_values = [sample["busy_counter_total"] for sample in samples]
         full_values = [sample["full_counter_total"] for sample in samples]
+        spacing_values = [sample["spacing_counter_total"] for sample in samples] if "spacing_counter_total" in samples[0] else []
+        queue_values = [sample["queue_counter_total"] for sample in samples] if "queue_counter_total" in samples[0] else []
+        ring_values = [sample["ring_counter_total"] for sample in samples] if "ring_counter_total" in samples[0] else []
+        output_values = [sample["output_counter_total"] for sample in samples] if "output_counter_total" in samples[0] else []
 
-        summary_rows.append(
-            {
-                "rate_hz_per_channel": rate,
-                "repeats": len(samples),
-                "dead_fraction_mean": mean(dead_values),
-                "dead_fraction_std": stddev(dead_values),
-                "accepted_total_mean": mean(accepted_values),
-                "accepted_total_std": stddev(accepted_values),
-                "sent_total_mean": mean(sent_values),
-                "sent_total_std": stddev(sent_values),
-                "busy_counter_total_mean": mean(busy_values),
-                "busy_counter_total_std": stddev(busy_values),
-                "full_counter_total_mean": mean(full_values),
-                "full_counter_total_std": stddev(full_values),
-            }
-        )
+        row = {
+            "rate_hz_per_channel": rate,
+            "repeats": len(samples),
+            "dead_fraction_mean": mean(dead_values),
+            "dead_fraction_std": stddev(dead_values),
+            "accepted_total_mean": mean(accepted_values),
+            "accepted_total_std": stddev(accepted_values),
+            "sent_total_mean": mean(sent_values),
+            "sent_total_std": stddev(sent_values),
+            "busy_counter_total_mean": mean(busy_values),
+            "busy_counter_total_std": stddev(busy_values),
+            "full_counter_total_mean": mean(full_values),
+            "full_counter_total_std": stddev(full_values),
+        }
+        if spacing_values:
+            row["spacing_counter_total_mean"] = mean(spacing_values)
+            row["spacing_counter_total_std"] = stddev(spacing_values)
+            row["queue_counter_total_mean"] = mean(queue_values)
+            row["queue_counter_total_std"] = stddev(queue_values)
+            row["ring_counter_total_mean"] = mean(ring_values)
+            row["ring_counter_total_std"] = stddev(ring_values)
+            row["output_counter_total_mean"] = mean(output_values)
+            row["output_counter_total_std"] = stddev(output_values)
+
+        summary_rows.append(row)
     return summary_rows
 
 
@@ -192,7 +210,8 @@ def main():
         raise ValueError("--signal-delay-steps must be in [0, 31]")
     if builder_variant == "baseline" and args.signal_delay_steps != 0:
         raise ValueError("--signal-delay-steps only applies to the ring builder variant")
-    ensure_built(repo_root, args.firmware_root, builder_variant)
+    if not args.skip_build:
+        ensure_built(repo_root, args.firmware_root, builder_variant)
     print(f"USING builder_variant={builder_variant} signal_delay_steps={args.signal_delay_steps}")
 
     raw_rows = []
