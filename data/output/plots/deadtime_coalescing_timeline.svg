@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="453.6pt" height="194.4pt" viewBox="0 0 453.6 194.4" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-04-24T12:14:21.709018</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.0, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 194.4 
+L 453.6 194.4 
+L 453.6 0 
+L 0 0 
+z
+" style="fill: #131b24"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 47.760192 90.135018 
+L 235.75199 90.135018 
+L 235.75199 70.353068 
+L 47.760192 70.353068 
+z
+" clip-path="url(#pb2a55dbdd1)" style="fill: #96d6ae; opacity: 0.88; stroke: #96d6ae; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 146.232086 110.387966 
+L 334.223885 110.387966 
+L 334.223885 90.606017 
+L 146.232086 90.606017 
+z
+" clip-path="url(#pb2a55dbdd1)" style="fill: #92ddf2; opacity: 0.88; stroke: #92ddf2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 47.760192 157.487846 
+L 334.223885 157.487846 
+L 334.223885 133.937906 
+L 47.760192 133.937906 
+z
+" clip-path="url(#pb2a55dbdd1)" style="fill: #d8b365; opacity: 0.92; stroke: #d8b365; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 38.808202 45.390132 
+L 396.887818 45.390132 
+" clip-path="url(#pb2a55dbdd1)" style="fill: none; stroke: #c4cdd5; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 63.426175 52.455114 
+L 63.426175 38.32515 
+" clip-path="url(#pb2a55dbdd1)" style="fill: none; stroke: #ecf1f4; stroke-width: 1.1; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 161.89807 52.455114 
+L 161.89807 38.32515 
+" clip-path="url(#pb2a55dbdd1)" style="fill: none; stroke: #ecf1f4; stroke-width: 1.1; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ecf1f4" x="7.476235" y="14.77521" transform="rotate(-0 7.476235 14.77521)">Same two triggers, two output policies</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #ecf1f4" x="63.426175" y="33.615162" transform="rotate(-0 63.426175 33.615162)">T1</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #ecf1f4" x="161.89807" y="33.615162" transform="rotate(-0 161.89807 33.615162)">T2</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ecf1f4" x="18.666223" y="77.989429" transform="rotate(-0 18.666223 77.989429)">ring50</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 7px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #131b24" x="141.756091" y="82.025215" transform="rotate(-0 141.756091 82.025215)">frame 1</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 7px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #131b24" x="240.227986" y="102.278163" transform="rotate(-0 240.227986 102.278163)">frame 2</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 7px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #f2682b" x="190.992038" y="126.307305" transform="rotate(-0 190.992038 126.307305)">overlap samples emitted twice</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 8px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ecf1f4" x="18.666223" y="148.690499" transform="rotate(-0 18.666223 148.690499)">coalesced</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 7px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #131b24" x="190.992038" y="147.449205" transform="rotate(-0 190.992038 147.449205)">one non-overlapping interval</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 7px; font-family: 'Helvetica', 'Arial', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #ecf1f4" x="190.992038" y="173.398982" transform="rotate(-0 190.992038 173.398982)">metadata: T1, T2</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pb2a55dbdd1">
+   <rect x="3.00024" y="3.00024" width="447.59952" height="188.39952"/>
+  </clipPath>
+ </defs>
+</svg>

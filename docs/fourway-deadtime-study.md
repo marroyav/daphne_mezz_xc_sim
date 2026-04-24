@@ -158,7 +158,7 @@ Default scan:
 
 - `200 Hz/ch` to `20 kHz/ch`
 - `120` points
-- `5` repeats
+- `4` repeats
 - `20000` warmup cycles
 - `200000` measurement cycles
 
@@ -182,12 +182,12 @@ Representative points from the dense sweep:
 
 | rate [Hz/ch] | `1024 waveform` [%] | `512 waveform` [%] | `512 + ring0` [%] | `512 + ring50` [%] |
 |---:|---:|---:|---:|---:|
-| `1032`  | `2.23` | `1.14` | `1.14` | `0.46` |
-| `4600`  | `7.47` | `4.22` | `4.21` | `2.61` |
-| `5025`  | `7.57` | `4.08` | `4.21` | `2.42` |
-| `10017` | `16.29` | `9.26` | `8.80` | `5.31` |
-| `14010` | `23.70` | `12.47` | `11.92` | `7.44` |
-| `20000` | `36.15` | `17.74` | `16.67` | `11.57` |
+| `1032`  | `2.03` | `1.24` | `1.24` | `0.38` |
+| `4600`  | `7.41` | `4.20` | `4.20` | `2.65` |
+| `5025`  | `7.17` | `3.82` | `3.90` | `2.30` |
+| `10017` | `16.46` | `9.16` | `8.97` | `5.48` |
+| `14010` | `24.05` | `12.54` | `12.04` | `7.55` |
+| `20000` | `36.76` | `17.83` | `16.82` | `11.77` |
 
 ## Findings
 
@@ -197,9 +197,9 @@ That is the first major reduction across the full rate range.
 
 Examples:
 
-- around `10 kHz/ch`: `16.29% -> 9.26%`
-- around `14 kHz/ch`: `23.70% -> 12.47%`
-- at `20 kHz/ch`: `36.15% -> 17.74%`
+- around `10 kHz/ch`: `16.46% -> 9.16%`
+- around `14 kHz/ch`: `24.05% -> 12.54%`
+- at `20 kHz/ch`: `36.76% -> 17.83%`
 
 So the waveform-length reduction is still the biggest single lever.
 
@@ -212,11 +212,11 @@ does not fundamentally relax the spacing policy.
 
 Examples:
 
-- at the FD-HD point around `4.6 kHz/ch`: `4.22% -> 4.21%`
-- around `5 kHz/ch`: `4.08% -> 4.21%`
-- around `10 kHz/ch`: `9.26% -> 8.80%`
-- around `14 kHz/ch`: `12.47% -> 11.92%`
-- at `20 kHz/ch`: `17.74% -> 16.67%`
+- at the FD-HD point around `4.6 kHz/ch`: `4.20% -> 4.20%`
+- around `5 kHz/ch`: `3.82% -> 3.90%`
+- around `10 kHz/ch`: `9.16% -> 8.97%`
+- around `14 kHz/ch`: `12.54% -> 12.04%`
+- at `20 kHz/ch`: `17.83% -> 16.82%`
 
 So `ring0` is essentially neutral at the FD-HD point and only becomes a modest
 improvement as the rate rises. It does not change the regime dramatically.
@@ -228,15 +228,15 @@ This is the first case that gives a materially different curve beyond the
 
 Examples:
 
-- around `10 kHz/ch`: `5.31%`
-- around `14 kHz/ch`: `7.44%`
+- around `10 kHz/ch`: `5.48%`
+- around `14 kHz/ch`: `7.55%`
 - at `20 kHz/ch`: `11.57%`
 
 Relative to the original `1024` waveform:
 
-- around `10 kHz/ch`: `16.29% -> 5.31%`
-- around `14 kHz/ch`: `23.70% -> 7.44%`
-- at `20 kHz/ch`: `36.15% -> 11.57%`
+- around `10 kHz/ch`: `16.46% -> 5.48%`
+- around `14 kHz/ch`: `24.05% -> 7.55%`
+- at `20 kHz/ch`: `36.76% -> 11.77%`
 
 That is the architecture that actually changes the operating envelope.
 

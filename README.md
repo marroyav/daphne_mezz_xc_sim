@@ -340,7 +340,7 @@ python3 scripts/run_deadtime_fourway_compare.py \
   --rate-start 200 \
   --rate-stop 20000 \
   --points 120 \
-  --repeats 5
+  --repeats 4
 ```
 
 Important limitation:
@@ -350,6 +350,41 @@ Important limitation:
   timing inside the serializer
 - use it to sweep quickly and identify dominant reject causes, not as a
   replacement for the HDL bench
+
+## Dead-time optimization study
+
+For the current non-overlap optimization argument, the repo now includes:
+
+- a coalesced non-overlap architecture probe
+- a transport-scaling comparison (`2 x 20` channels vs `4 x 10`)
+- operating-point figures for the downstream-contract discussion
+
+Run the full stochastic study bundle with:
+
+```sh
+python3 scripts/run_deadtime_optimization_study.py
+```
+
+This renders:
+
+- the four-way architecture plot
+- the ring versus coalesced comparison
+- the throughput/saturation view
+- the transport-scaling plot
+- compact presentation figures
+
+Useful standalone entry points:
+
+```sh
+python3 scripts/plot_deadtime_coalesced_compare.py
+python3 scripts/plot_deadtime_throughput_compare.py
+python3 scripts/plot_deadtime_transport_compare.py
+python3 scripts/plot_deadtime_argument_figures.py
+```
+
+The deep report note for the current optimization direction is:
+
+- [`docs/deadtime-optimization-study.md`](docs/deadtime-optimization-study.md)
 
 ### Bursty arrival studies from empirical event spacings
 

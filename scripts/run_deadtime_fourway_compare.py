@@ -13,7 +13,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rate-start", type=int, default=200)
     parser.add_argument("--rate-stop", type=int, default=20000)
     parser.add_argument("--points", type=int, default=120)
-    parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--repeats", type=int, default=4)
     parser.add_argument("--warmup-cycles", type=int, default=20000)
     parser.add_argument("--measure-cycles", type=int, default=200000)
     parser.add_argument(

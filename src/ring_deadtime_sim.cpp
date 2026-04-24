@@ -76,11 +76,13 @@ struct EventCompare {
 
 struct PendingFrame {
   std::uint64_t sample0_ts = 0;
+  std::uint64_t end_ts = 0;
   std::uint64_t maturity_time = 0;
 };
 
 struct Service {
   int channel = 0;
+  int words = 0;
   std::uint64_t start = 0;
   std::uint64_t end = 0;
 };
@@ -89,11 +91,16 @@ struct ChannelState {
   std::deque<PendingFrame> queue;
   bool serializer_active = false;
   std::uint64_t active_sample0_ts = 0;
+  std::uint64_t active_end_ts = 0;
+  int active_record_words = 0;
   std::uint64_t serializer_end = 0;
   std::uint64_t busy_until = 0;
   bool last_trigger_valid = false;
   std::uint64_t last_trigger_ts = 0;
-  int completed_records = 0;
+  std::deque<int> completed_record_words;
+  int completed_words = 0;
+  bool coverage_valid = false;
+  std::uint64_t coverage_end_ts = 0;
 };
 
 struct LaneState {
@@ -109,6 +116,7 @@ struct RunStats {
   std::uint64_t generated_total = 0;
   std::uint64_t accepted_total = 0;
   std::uint64_t sent_total = 0;
+  std::uint64_t sent_word_total = 0;
   std::uint64_t busy_counter_total = 0;
   std::uint64_t full_counter_total = 0;
   std::uint64_t spacing_counter_total = 0;
@@ -128,6 +136,8 @@ struct SummaryRow {
   double accepted_total_std = 0.0;
   double sent_total_mean = 0.0;
   double sent_total_std = 0.0;
+  double sent_word_total_mean = 0.0;
+  double sent_word_total_std = 0.0;
   double busy_counter_total_mean = 0.0;
   double busy_counter_total_std = 0.0;
   double full_counter_total_mean = 0.0;
@@ -199,7 +209,7 @@ void print_help(std::ostream &os) {
      << "ring-buffer HDL acceptance rules.\n\n"
      << "Options:\n"
      << "  --rate-list CSV               Comma-separated per-channel rates in Hz\n"
-     << "  --architecture NAME          legacy or ring (default: ring)\n"
+     << "  --architecture NAME          legacy, ring, or coalesced (default: ring)\n"
      << "  --rate-start N               Sweep start rate in Hz/channel\n"
      << "  --rate-stop N                Sweep stop rate in Hz/channel\n"
      << "  --points N                   Number of linear sweep points\n"
@@ -307,8 +317,8 @@ Config parse_args(int argc, char **argv) {
   if (cfg.channels != cfg.lanes * cfg.channels_per_lane) {
     throw std::runtime_error("channels must equal lanes * channels-per-lane");
   }
-  if (cfg.architecture != "ring" && cfg.architecture != "legacy") {
-    throw std::runtime_error("architecture must be 'ring' or 'legacy'");
+  if (cfg.architecture != "ring" && cfg.architecture != "legacy" && cfg.architecture != "coalesced") {
+    throw std::runtime_error("architecture must be 'legacy', 'ring', or 'coalesced'");
   }
   if (cfg.points < 1 || cfg.repeats < 1) {
     throw std::runtime_error("points and repeats must be positive");
@@ -421,6 +431,7 @@ struct Simulator {
     out.generated_total = generated_total;
     out.accepted_total = accepted_total;
     out.sent_total = sent_total;
+    out.sent_word_total = sent_word_total;
     out.busy_counter_total = busy_total;
     out.full_counter_total = full_total;
     out.spacing_counter_total = spacing_total;
@@ -458,6 +469,7 @@ struct Simulator {
   std::uint64_t generated_total = 0;
   std::uint64_t accepted_total = 0;
   std::uint64_t sent_total = 0;
+  std::uint64_t sent_word_total = 0;
   std::uint64_t busy_total = 0;
   std::uint64_t full_total = 0;
   std::uint64_t spacing_total = 0;
@@ -482,6 +494,27 @@ struct Simulator {
       return trigger_ts - static_cast<std::uint64_t>(cfg.pretrigger_samples);
     }
     return 0;
+  }
+
+  int blocks_for_samples(std::uint64_t samples) const {
+    if (samples == 0ULL) {
+      return 0;
+    }
+    return static_cast<int>((samples + 31ULL) / 32ULL);
+  }
+
+  int record_words_for_samples(std::uint64_t samples) const {
+    return 8 + blocks_for_samples(samples) * 7;
+  }
+
+  std::uint64_t serializer_cycles_for_samples(std::uint64_t samples) const {
+    return static_cast<std::uint64_t>(8 + blocks_for_samples(samples) * 40);
+  }
+
+  void push_completed_record(int channel, int words) {
+    ChannelState &state = channels[static_cast<std::size_t>(channel)];
+    state.completed_record_words.push_back(words);
+    state.completed_words += words;
   }
 
   std::uint64_t next_arrival_delta() {
@@ -510,11 +543,11 @@ struct Simulator {
 
   int visible_words(int channel, std::uint64_t time) const {
     const ChannelState &state = channels[static_cast<std::size_t>(channel)];
-    int words = state.completed_records * cfg.record_words;
+    int words = state.completed_words;
     const LaneState &lane = lanes[static_cast<std::size_t>(lane_of_channel(channel))];
     if (lane.current_service && lane.current_service->channel == channel && time >= lane.current_service->start) {
       const std::uint64_t elapsed = time - lane.current_service->start;
-      const int drained = static_cast<int>(std::min<std::uint64_t>(elapsed, static_cast<std::uint64_t>(cfg.record_words - 1)));
+      const int drained = static_cast<int>(std::min<std::uint64_t>(elapsed, static_cast<std::uint64_t>(lane.current_service->words - 1)));
       words = std::max(0, words - drained);
     }
     return words;
@@ -538,9 +571,14 @@ struct Simulator {
     }
     const PendingFrame frame = state.queue.front();
     state.queue.pop_front();
+    const std::uint64_t frame_samples = frame.end_ts >= frame.sample0_ts ? frame.end_ts - frame.sample0_ts + 1ULL : 0ULL;
     state.serializer_active = true;
     state.active_sample0_ts = frame.sample0_ts;
-    state.serializer_end = time + static_cast<std::uint64_t>(cfg.serializer_cycles);
+    state.active_end_ts = frame.end_ts;
+    state.active_record_words = cfg.architecture == "coalesced" ? record_words_for_samples(frame_samples) : cfg.record_words;
+    state.serializer_end =
+        time + (cfg.architecture == "coalesced" ? serializer_cycles_for_samples(frame_samples)
+                                                 : static_cast<std::uint64_t>(cfg.serializer_cycles));
     push_event(state.serializer_end, EventKind::SerializerEnd, channel);
   }
 
@@ -565,15 +603,21 @@ struct Simulator {
       return;
     }
 
+    const ChannelState &state = channels[static_cast<std::size_t>(chosen)];
+    const int service_words = state.completed_record_words.empty() ? cfg.record_words : state.completed_record_words.front();
     const std::uint64_t start = now + static_cast<std::uint64_t>(empty_steps + 1);
-    const std::uint64_t end = start + static_cast<std::uint64_t>(cfg.record_words);
-    lane.current_service = Service{chosen, start, end};
+    const std::uint64_t end = start + static_cast<std::uint64_t>(service_words);
+    lane.current_service = Service{chosen, service_words, start, end};
     push_event(end, EventKind::ServiceEnd, chosen);
   }
 
   void handle_arrival(const Event &event) {
     if (cfg.architecture == "legacy") {
       handle_legacy_arrival(event);
+      return;
+    }
+    if (cfg.architecture == "coalesced") {
+      handle_coalesced_arrival(event);
       return;
     }
 
@@ -610,8 +654,9 @@ struct Simulator {
 
     if (can_accept) {
       const std::uint64_t sample0_ts = sample0_ts_for(event.time);
-      const std::uint64_t maturity_time = sample0_ts + static_cast<std::uint64_t>(cfg.frame_samples - 1);
-      state.queue.push_back(PendingFrame{sample0_ts, maturity_time});
+      const std::uint64_t end_ts = sample0_ts + static_cast<std::uint64_t>(cfg.frame_samples - 1);
+      const std::uint64_t maturity_time = end_ts;
+      state.queue.push_back(PendingFrame{sample0_ts, end_ts, maturity_time});
       state.last_trigger_valid = true;
       state.last_trigger_ts = event.time;
       push_event(maturity_time, EventKind::Maturity, event.channel);
@@ -647,14 +692,14 @@ struct Simulator {
   }
 
   void handle_maturity(const Event &event) {
-    if (cfg.architecture != "ring") {
+    if (cfg.architecture != "ring" && cfg.architecture != "coalesced") {
       return;
     }
     maybe_start_serializer(event.channel, event.time);
   }
 
   void handle_serializer_end(const Event &event) {
-    if (cfg.architecture != "ring") {
+    if (cfg.architecture != "ring" && cfg.architecture != "coalesced") {
       return;
     }
     ChannelState &state = channels[static_cast<std::size_t>(event.channel)];
@@ -662,7 +707,10 @@ struct Simulator {
       return;
     }
     state.serializer_active = false;
-    state.completed_records += 1;
+    push_completed_record(event.channel, state.active_record_words);
+    state.active_sample0_ts = 0;
+    state.active_end_ts = 0;
+    state.active_record_words = 0;
     maybe_start_serializer(event.channel, event.time);
     maybe_schedule_service(lane_of_channel(event.channel), event.time);
   }
@@ -674,9 +722,13 @@ struct Simulator {
     }
 
     ChannelState &state = channels[static_cast<std::size_t>(event.channel)];
-    state.completed_records = std::max(0, state.completed_records - 1);
+    if (!state.completed_record_words.empty()) {
+      state.completed_words = std::max(0, state.completed_words - state.completed_record_words.front());
+      state.completed_record_words.pop_front();
+    }
     if (in_measure(event.time)) {
       ++sent_total;
+      sent_word_total += static_cast<std::uint64_t>(lane.current_service->words);
     }
     lane.rr_sel = (local_channel_of(event.channel) + 1) % cfg.channels_per_lane;
     lane.current_service.reset();
@@ -730,8 +782,102 @@ struct Simulator {
     if (event.time != state.busy_until) {
       return;
     }
-    state.completed_records += 1;
+    push_completed_record(event.channel, cfg.record_words);
     maybe_schedule_service(lane_of_channel(event.channel), event.time);
+  }
+
+  void handle_coalesced_arrival(const Event &event) {
+    ChannelState &state = channels[static_cast<std::size_t>(event.channel)];
+    if (p > 0.0) {
+      const std::uint64_t dt = next_arrival_delta();
+      if (dt != std::numeric_limits<std::uint64_t>::max() && event.time + dt <= total_cycles) {
+        push_event(event.time + dt, EventKind::Arrival, event.channel);
+      }
+    }
+
+    if (in_measure(event.time)) {
+      ++generated_total;
+    }
+
+    const std::uint64_t sample0_ts = sample0_ts_for(event.time);
+    const std::uint64_t window_end_ts = sample0_ts + static_cast<std::uint64_t>(cfg.frame_samples - 1);
+
+    // Coalesced mode keeps trigger acceptance separate from output intervals:
+    // overlapping trigger windows become metadata on one non-overlapping
+    // waveform interval, or clip the next interval start to the already-covered
+    // sample range.
+    bool oldest_valid = false;
+    std::uint64_t oldest_sample0_ts = 0;
+    if (state.serializer_active) {
+      oldest_valid = true;
+      oldest_sample0_ts = state.active_sample0_ts;
+    } else if (!state.queue.empty()) {
+      oldest_valid = true;
+      oldest_sample0_ts = state.queue.front().sample0_ts;
+    }
+
+    const bool ring_safe_ok =
+        (!oldest_valid) || (event.time - oldest_sample0_ts <= static_cast<std::uint64_t>(ring_safe_margin));
+    const bool output_ok = !prog_full(event.channel, event.time);
+
+    const bool already_covered = state.coverage_valid && window_end_ts <= state.coverage_end_ts;
+    const bool merge_tail = !state.queue.empty() && sample0_ts <= state.queue.back().end_ts + 1ULL;
+    const bool needs_new_interval = !already_covered && !merge_tail;
+    const bool queue_space_ok = !needs_new_interval || static_cast<int>(state.queue.size()) < cfg.queue_depth;
+    const bool can_accept = output_ok && ring_safe_ok && queue_space_ok;
+
+    if (!can_accept) {
+      if (!output_ok) {
+        if (in_measure(event.time)) {
+          ++full_total;
+          ++output_total;
+        }
+      } else if (!queue_space_ok) {
+        if (in_measure(event.time)) {
+          ++busy_total;
+          ++queue_total;
+        }
+      } else if (!ring_safe_ok) {
+        if (in_measure(event.time)) {
+          ++busy_total;
+          ++ring_total;
+        }
+      } else if (in_measure(event.time)) {
+        ++busy_total;
+      }
+      return;
+    }
+
+    if (already_covered) {
+      if (in_measure(event.time)) {
+        ++accepted_total;
+      }
+      return;
+    }
+
+    if (merge_tail) {
+      PendingFrame &tail = state.queue.back();
+      if (window_end_ts > tail.end_ts) {
+        tail.end_ts = window_end_ts;
+        tail.maturity_time = window_end_ts;
+        push_event(tail.maturity_time, EventKind::Maturity, event.channel);
+      }
+      state.coverage_end_ts = std::max(state.coverage_end_ts, window_end_ts);
+      if (in_measure(event.time)) {
+        ++accepted_total;
+      }
+      return;
+    }
+
+    const std::uint64_t interval_start =
+        state.coverage_valid && sample0_ts <= state.coverage_end_ts ? state.coverage_end_ts + 1ULL : sample0_ts;
+    state.queue.push_back(PendingFrame{interval_start, window_end_ts, window_end_ts});
+    state.coverage_valid = true;
+    state.coverage_end_ts = window_end_ts;
+    push_event(window_end_ts, EventKind::Maturity, event.channel);
+    if (in_measure(event.time)) {
+      ++accepted_total;
+    }
   }
 };
 
@@ -750,6 +896,7 @@ std::vector<SummaryRow> summarise(const std::vector<RunStats> &raw_rows) {
     std::vector<double> generated;
     std::vector<double> accepted;
     std::vector<double> sent;
+    std::vector<double> sent_words;
     std::vector<double> busy;
     std::vector<double> full;
     std::vector<double> spacing;
@@ -765,6 +912,7 @@ std::vector<SummaryRow> summarise(const std::vector<RunStats> &raw_rows) {
       generated.push_back(static_cast<double>(row.generated_total));
       accepted.push_back(static_cast<double>(row.accepted_total));
       sent.push_back(static_cast<double>(row.sent_total));
+      sent_words.push_back(static_cast<double>(row.sent_word_total));
       busy.push_back(static_cast<double>(row.busy_counter_total));
       full.push_back(static_cast<double>(row.full_counter_total));
       spacing.push_back(static_cast<double>(row.spacing_counter_total));
@@ -783,6 +931,8 @@ std::vector<SummaryRow> summarise(const std::vector<RunStats> &raw_rows) {
     row.accepted_total_std = stddev(accepted);
     row.sent_total_mean = mean(sent);
     row.sent_total_std = stddev(sent);
+    row.sent_word_total_mean = mean(sent_words);
+    row.sent_word_total_std = stddev(sent_words);
     row.busy_counter_total_mean = mean(busy);
     row.busy_counter_total_std = stddev(busy);
     row.full_counter_total_mean = mean(full);
@@ -807,7 +957,7 @@ void write_raw_csv(const std::string &path, const std::vector<RunStats> &rows) {
   if (!out) {
     throw std::runtime_error("failed to open raw CSV for writing: " + path);
   }
-  out << "rate_hz_per_channel,repeat_index,signal_delay_steps,generated_total,accepted_total,sent_total,"
+  out << "rate_hz_per_channel,repeat_index,signal_delay_steps,generated_total,accepted_total,sent_total,sent_word_total,"
          "busy_counter_total,full_counter_total,spacing_counter_total,queue_counter_total,ring_counter_total,"
          "output_counter_total,dead_ppm,dead_fraction\n";
   out << std::fixed << std::setprecision(9);
@@ -818,6 +968,7 @@ void write_raw_csv(const std::string &path, const std::vector<RunStats> &rows) {
         << row.generated_total << ','
         << row.accepted_total << ','
         << row.sent_total << ','
+        << row.sent_word_total << ','
         << row.busy_counter_total << ','
         << row.full_counter_total << ','
         << row.spacing_counter_total << ','
@@ -838,6 +989,7 @@ void write_summary_csv(const std::string &path, const std::vector<SummaryRow> &r
          "generated_total_mean,generated_total_std,"
          "accepted_total_mean,accepted_total_std,"
          "sent_total_mean,sent_total_std,"
+         "sent_word_total_mean,sent_word_total_std,"
          "busy_counter_total_mean,busy_counter_total_std,"
          "full_counter_total_mean,full_counter_total_std,"
          "spacing_counter_total_mean,spacing_counter_total_std,"
@@ -855,6 +1007,8 @@ void write_summary_csv(const std::string &path, const std::vector<SummaryRow> &r
         << row.accepted_total_std << ','
         << row.sent_total_mean << ','
         << row.sent_total_std << ','
+        << row.sent_word_total_mean << ','
+        << row.sent_word_total_std << ','
         << row.busy_counter_total_mean << ','
         << row.busy_counter_total_std << ','
         << row.full_counter_total_mean << ','
