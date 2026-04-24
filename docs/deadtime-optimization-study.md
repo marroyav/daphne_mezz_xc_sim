@@ -233,6 +233,73 @@ The current main tree explicitly documents major board-local BRAM consumers:
 That makes the spy plane the cleanest BRAM release valve for a production
 variant.
 
+### The current `ring-builder-2k` hardware baseline is real, but BRAM-limited
+
+The latest successful Linux-native implementation run on `np04-srv-017` is:
+
+- branch: `marroyav/ring-builder-2k`
+- commit: `27a4ca9`
+- artifacts produced:
+  - `.bit`
+  - `.bin`
+  - `.xsa`
+  - `.dtbo`
+
+From the archived reports:
+
+Post-synth:
+
+- CLB LUTs: `107,963 / 117,120` (`92.18%`)
+- LUT as Logic: `98,658 / 117,120` (`84.24%`)
+- CLB Registers: `141,316 / 234,240` (`60.33%`)
+- Block RAM Tile: `142 / 144` (`98.61%`)
+- URAM: `40 / 64` (`62.50%`)
+- DSPs: `1200 / 1248` (`96.15%`)
+
+Post-route:
+
+- CLB LUTs: `105,404 / 117,120` (`90.00%`)
+- LUT as Logic: `97,547 / 117,120` (`83.29%`)
+- CLB Registers: `138,538 / 234,240` (`59.14%`)
+- Block RAM Tile: `139 / 144` (`96.53%`)
+- URAM: `40 / 64` (`62.50%`)
+- DSPs: `1200 / 1248` (`96.15%`)
+- WNS: `+0.103 ns`
+- TNS: `0.000`
+- WHS: `+0.010`
+- THS: `0.000`
+
+This changes the practical optimization picture:
+
+- the `2k` ring architecture is no longer speculative; it is buildable
+- LUTs are high, but no longer the stopping condition
+- BRAM is now the dominant implementation constraint
+- DSP remains tight but is slightly better than the earlier `1240`-DSP builds
+
+So the next hardware reduction effort should target BRAM first, not counters.
+
+### Modular build structure supports BRAM-trimmed variants
+
+The composable build is already structured around explicit feature planes:
+
+- [`daphne-composable.core`](../../daphne-firmware/cores/features/daphne-composable.core)
+- [`k26c-board-shell.core`](../../daphne-firmware/cores/features/k26c-board-shell.core)
+- [`k26c-board-transport-plane.core`](../../daphne-firmware/cores/features/k26c-board-transport-plane.core)
+
+The current board shell still pulls in the spy-capture plane directly, so a
+production “optimized readout” flavor would still need a small top/core split.
+
+But the decomposition already exists:
+
+- frontend plane
+- timing plane
+- selftrigger plane
+- transport plane
+- spy capture plane
+
+That means the best BRAM-saving build flavor is not a deep RTL rewrite. It is a
+clean alternate shell/platform composition that drops or shrinks the spy path.
+
 ### UltraFast guidance lines up with the same priorities
 
 The AMD references used for this study are catalogued locally in:
@@ -306,17 +373,31 @@ The best first candidate is:
 
 That buys meaningful BRAM without changing detector semantics.
 
+The practical order is:
+
+1. keep `27a4ca9` as the hardware-feasible baseline
+2. define a BRAM-trimmed build flavor that removes or shrinks spy capture
+3. spend the recovered BRAM budget on the assembler contract that the
+   coalesced study actually needs
+
 ## Current blocker
 
-This note does **not** yet integrate the last successful remote implementation
-reports from `np04-srv-017`, because they are not reachable from this machine.
+This note now integrates the latest successful remote implementation reports.
 
-The simulation and source-side optimization study is ready.
-The final implementation plan should still be amended with:
+The next missing hardware detail is hierarchical accounting, not top-level fit.
 
-- the latest successful `post_synth_util.rpt`
-- the latest successful timing summary
-- any congestion or QoR-suggestions reports from that run
+The most useful next reports from the successful `27a4ca9` build are:
+
+- hierarchical BRAM utilization
+- hierarchical LUT utilization
+- QoR suggestions / methodology reports for congestion and control sets
+
+Those will let the implementation plan assign savings to:
+
+- spy plane
+- record-builder path
+- transport plane
+- any residual distributed-memory or control-set hotspots
 
 ## Reproduction
 
