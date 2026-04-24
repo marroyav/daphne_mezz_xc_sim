@@ -278,6 +278,86 @@ This changes the practical optimization picture:
 
 So the next hardware reduction effort should target BRAM first, not counters.
 
+### Resource deltas now identify the real first lever
+
+Against the earlier routed-clean `a389fcd` baseline, the current successful
+`27a4ca9` ring build looks like this:
+
+| build | CLB LUTs | LUT as Logic | BRAM tiles | URAM | DSPs | WNS |
+|---|---:|---:|---:|---:|---:|---:|
+| `a389fcd` baseline | `84,532` | `84k-class` | `99` | `40` | `1240` | `+0.247 ns` |
+| `27a4ca9` ring2k | `105,404` | `97,547` | `139` | `40` | `1200` | `+0.103 ns` |
+| delta | `+20,872` | `+13k-class` | `+40` | `0` | `-40` | `-0.144 ns` |
+
+This is the most useful budgeting fact in the study:
+
+- the ring2k path is not failing on timing,
+- it is not failing on DSP,
+- and its incremental cost is now dominated by about `+40` BRAM tiles.
+
+That aligns closely with the ring-storage expectation and means the next
+resource argument should be made in BRAM, not in abstract LUT terms.
+
+### BRAM release is more concrete than “general optimization”
+
+The main tree already exposes a BRAM budget large enough to matter:
+
+- the spy-capture plane is documented in
+  [`spybuffers.vhd`](../../daphne-firmware/ip_repo/daphne_ip/rtl/spy/spybuffers.vhd)
+  as `49` BRAM36 at the current `2k` depth
+- the output spy FIFO is documented in
+  [`outspybuff.vhd`](../../daphne-firmware/ip_repo/daphne_ip/rtl/misc/outspybuff.vhd)
+  as `4` BRAM36 at `2048`
+
+So the first realistic “make room for a better assembler” option is not an
+uncertain micro-optimization. It is:
+
+- keep the proven `2k` ring baseline,
+- create an optimized build flavor that drops or shrinks the spy path,
+- and reclaim on the order of the entire current ring cost in BRAM.
+
+That is a much stronger position than trying to save a few BRAMs indirectly by
+rewriting counters or transport mux bookkeeping.
+
+### The logs do not show accidental dead logic; they show deliberate feature load
+
+There is no evidence in the current successful reports of a giant block of
+accidentally unused logic waiting to be swept away.
+
+What the logs do show is:
+
+- explicit BRAM-heavy debug/instrumentation features in the source tree
+- methodology warnings clustered mostly in the transport / Ethernet side
+- a routed build that is resource-tight but valid
+
+So the practical removable logic is:
+
+- optional spy/debug capture,
+- not some hidden dead datapath inside the self-trigger core.
+
+That distinction matters, because it means the next cut should be made by
+feature composition, not by speculative “cleanup” edits in already-routed
+trigger logic.
+
+### Methodology warnings point mostly away from the ring builder
+
+From the successful `27a4ca9` reports:
+
+- post-route methodology shows `TIMING-17`, `TIMING-6`, `TIMING-7`,
+  `LUTAR-1`, `NTCN-11`, and `ULMTCS-1`
+- post-implementation DRC shows `DPIP-2`, `DPOP-3`, and `DPOP-4`
+- post-route utilization shows `Unique Control Sets = 4240` (`14.48%`)
+
+The detailed critical-warning population is dominated by the transport /
+Ethernet side, not by the ring-builder acceptance path.
+
+That does **not** mean the transport should be ignored. It means:
+
+- the current self-trigger ring path is already good enough to route,
+- while some of the remaining QoR cleanup is in shared board/transport logic,
+- and therefore transport cleanup should be treated as a follow-on QoR task,
+  not as the first dead-time lever.
+
 ### Modular build structure supports BRAM-trimmed variants
 
 The composable build is already structured around explicit feature planes:
@@ -321,14 +401,46 @@ The most relevant recommendations are:
 Those recommendations come directly from UG949/UG901/UG912 and are consistent
 with what the current firmware tree already exposes as likely levers.
 
+The K26 device limits in DS987 are also now part of the argument, not just
+background context:
+
+- CLB LUTs: `117,120`
+- BRAM36-equivalent tiles: `144`
+- URAM blocks: `64`
+- DSP slices: `1,248`
+
+With the current successful ring2k route at `139 / 144` BRAM tiles, the design
+is telling us very clearly which budget is gone first.
+
 ## Recommended implementation order
 
-### 1. Keep waveform overlap off
+### 1. Keep waveform overlap off in the long-term architecture
 
 That matches the physics/DAQ requirement and the simulation result says the
 non-overlap direction is still viable.
 
-### 2. Prototype a coalesced non-overlap assembler in simulation first
+### 2. Preserve `27a4ca9` as the hardware baseline
+
+Do not destabilize the current successful `ring-builder-2k` route while
+exploring the next architecture.
+
+This build is the current proof that:
+
+- the ring2k concept fits,
+- timing is positive,
+- and the next trade study can be anchored to a real implementation.
+
+### 3. Build a BRAM-trimmed production flavor before redesigning the assembler
+
+The first hardware branch after `27a4ca9` should be a build flavor that:
+
+- removes or shrinks spy capture,
+- keeps the routed self-trigger/ring path intact,
+- and measures how much BRAM headroom is actually recovered.
+
+That is the most direct way to buy space for the next packet/assembler contract.
+
+### 4. Prototype a coalesced non-overlap assembler in simulation first
 
 Target behavior:
 
@@ -343,7 +455,7 @@ That is the right semantics for:
 - no overlapping waveform payload,
 - minimal acceptance dead time.
 
-### 3. Change the downstream contract before spending effort on more links
+### 5. Change the downstream contract before spending effort on more links
 
 The current coalesced model fails because of inherited `prog_full`, not because
 the algorithm is bad.
@@ -356,7 +468,7 @@ So the next hardware work should be one of:
 - or a widened transport-side buffer contract that no longer blocks the channel
   at the current threshold.
 
-### 4. Treat four lanes as a follow-on improvement
+### 6. Treat four lanes as a follow-on improvement
 
 Four lanes help the current ring path, but they are not the main fix.
 
@@ -365,26 +477,32 @@ So:
 - do not lead with transport splitting,
 - use it later as an incremental gain once the assembler contract is corrected.
 
-### 5. Release BRAM deliberately if the coalesced assembler needs it
+### 7. Use UltraFast-style reporting as part of the branch workflow
 
-The best first candidate is:
+The current successful run did not archive everything we would want for the next
+decision round.
 
-- reduce or disable the board-local spy plane for the optimized build flavor
+The next build automation pass should preserve:
 
-That buys meaningful BRAM without changing detector semantics.
+- hierarchical utilization
+- `report_design_analysis`
+- `report_qor_suggestions`
+- checkpoints suitable for post-route follow-up reports
 
-The practical order is:
-
-1. keep `27a4ca9` as the hardware-feasible baseline
-2. define a BRAM-trimmed build flavor that removes or shrinks spy capture
-3. spend the recovered BRAM budget on the assembler contract that the
-   coalesced study actually needs
+That is process work, but it is useful process work because the next decision is
+about where to spend recovered BRAM, not whether the branch can route at all.
 
 ## Current blocker
 
 This note now integrates the latest successful remote implementation reports.
 
-The next missing hardware detail is hierarchical accounting, not top-level fit.
+Top-level fit is no longer the blocker.
+
+The next blocker is architectural:
+
+- the best no-overlap algorithm requires a different packet/assembler contract,
+- and the hardware cost of that contract will have to come primarily from BRAM
+  reclaimed elsewhere.
 
 The most useful next reports from the successful `27a4ca9` build are:
 
