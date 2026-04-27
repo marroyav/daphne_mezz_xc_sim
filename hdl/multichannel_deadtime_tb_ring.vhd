@@ -18,6 +18,7 @@ entity multichannel_deadtime_tb is
     CHANNELS_PER_LANE_G : positive := 20;
     TRIGGER_RATE_HZ_G   : positive := 1000;
     SIGNAL_DELAY_STEPS_G : natural := 0;
+    FRAME_EXTEND_HOLD_CYCLES_G : natural := 0;
     RESET_CYCLES_G      : positive := 8;
     WARMUP_CYCLES_G     : positive := 20000;
     MEASURE_CYCLES_G    : positive := 200000;
@@ -33,6 +34,7 @@ architecture tb of multichannel_deadtime_tb is
   signal timestamp_s         : std_logic_vector(63 downto 0) := (others => '0');
   signal trigger_s           : trigger_xcorr_result_array_t(0 to CHANNEL_COUNT_G - 1) := (others => TRIGGER_XCORR_RESULT_NULL);
   signal trailer_s           : peak_descriptor_trailer_bank_t(0 to CHANNEL_COUNT_G - 1) := (others => PEAK_DESCRIPTOR_TRAILER_NULL);
+  signal frame_extend_s      : std_logic_array_t(0 to CHANNEL_COUNT_G - 1) := (others => '0');
   signal frame_match_s       : std_logic_array_t(0 to CHANNEL_COUNT_G - 1);
   signal record_count_s      : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
   signal full_count_s        : slv64_array_t(0 to CHANNEL_COUNT_G - 1);
@@ -60,6 +62,9 @@ begin
   builder_gen : for ch in 0 to CHANNEL_COUNT_G - 1 generate
   begin
     dut_builder : entity work.stc3_record_builder
+      generic map (
+        DETAILED_REJECT_COUNTERS_G => true
+      )
       port map (
         ch_id_i             => std_logic_vector(to_unsigned(ch, 8)),
         version_i           => x"1",
@@ -73,9 +78,11 @@ begin
         timestamp_i         => timestamp_s,
         din_i               => (others => '0'),
         trigger_i           => trigger_s(ch),
+        frame_extend_i      => frame_extend_s(ch),
         trailer_capture_i   => '0',
         trailer_i           => trailer_s(ch),
         frame_match_o       => frame_match_s(ch),
+        frame_trigger_offset_o => open,
         record_count_o      => record_count_s(ch),
         full_count_o        => full_count_s(ch),
         busy_count_o        => busy_count_s(ch),
@@ -128,6 +135,7 @@ begin
     variable p_v         : real := real(TRIGGER_RATE_HZ_G) / real(CLOCK_HZ_G);
     variable u_v         : real;
     variable trig_v      : trigger_xcorr_result_t;
+    variable extend_count_v : natural_array_t(0 to CHANNEL_COUNT_G - 1) := (others => 0);
     variable sum_generated_v : natural;
     variable sum_record_v    : natural;
     variable sum_busy_v      : natural;
@@ -178,16 +186,27 @@ begin
         trig_v.descriptor_sample := (others => '0');
         trig_v.trigger_sample := std_logic_vector(to_unsigned(ch, 14));
 
-        if cyc_v > RESET_CYCLES_G then
+        if reset_s = '1' then
+          extend_count_v(ch) := 0;
+        elsif cyc_v > RESET_CYCLES_G then
           uniform(seed1_v(ch), seed2_v(ch), u_v);
           if u_v < p_v then
             trig_v.trigger_pulse := '1';
+            if FRAME_EXTEND_HOLD_CYCLES_G > 0 then
+              extend_count_v(ch) := FRAME_EXTEND_HOLD_CYCLES_G;
+            end if;
             if cyc_v >= measure_lo_v and cyc_v < measure_hi_v then
               generated_v(ch) := generated_v(ch) + 1;
             end if;
           end if;
         end if;
 
+        if extend_count_v(ch) > 0 then
+          frame_extend_s(ch) <= '1';
+          extend_count_v(ch) := extend_count_v(ch) - 1;
+        else
+          frame_extend_s(ch) <= '0';
+        end if;
         trigger_s(ch) <= trig_v;
       end loop;
 

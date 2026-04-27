@@ -52,6 +52,12 @@ def parse_args():
         help="Ring-builder overlap control in 16-sample steps. Ignored for baseline.",
     )
     parser.add_argument(
+        "--frame-extend-hold-cycles",
+        type=int,
+        default=0,
+        help="Hold frame_extend_i high for this many cycles after each trigger in the ring wrapper bench.",
+    )
+    parser.add_argument(
         "--skip-build",
         action="store_true",
         help="Reuse an already elaborated multichannel_deadtime_tb executable.",
@@ -101,6 +107,7 @@ def run_one(
     measure_cycles: int,
     seed_base: int,
     signal_delay_steps: int,
+    frame_extend_hold_cycles: int,
 ):
     bench = bench_executable(repo_root)
     cmd = [
@@ -112,6 +119,8 @@ def run_one(
     ]
     if signal_delay_steps:
         cmd.append(f"-gSIGNAL_DELAY_STEPS_G={signal_delay_steps}")
+    if frame_extend_hold_cycles:
+        cmd.append(f"-gFRAME_EXTEND_HOLD_CYCLES_G={frame_extend_hold_cycles}")
     with TemporaryDirectory(prefix="daphne-deadtime-tb-") as run_dir:
         proc = subprocess.run(cmd, cwd=run_dir, check=True, capture_output=True, text=True)
     result_line = None
@@ -208,11 +217,20 @@ def main():
     builder_variant = detect_builder_variant(repo_root, args.firmware_root, args.builder_variant)
     if args.signal_delay_steps < 0 or args.signal_delay_steps > 31:
         raise ValueError("--signal-delay-steps must be in [0, 31]")
+    if args.frame_extend_hold_cycles < 0:
+        raise ValueError("--frame-extend-hold-cycles must be non-negative")
     if builder_variant == "baseline" and args.signal_delay_steps != 0:
         raise ValueError("--signal-delay-steps only applies to the ring builder variant")
+    if builder_variant == "baseline" and args.frame_extend_hold_cycles != 0:
+        raise ValueError("--frame-extend-hold-cycles only applies to the ring builder variant")
     if not args.skip_build:
         ensure_built(repo_root, args.firmware_root, builder_variant)
-    print(f"USING builder_variant={builder_variant} signal_delay_steps={args.signal_delay_steps}")
+    print(
+        "USING "
+        f"builder_variant={builder_variant} "
+        f"signal_delay_steps={args.signal_delay_steps} "
+        f"frame_extend_hold_cycles={args.frame_extend_hold_cycles}"
+    )
 
     raw_rows = []
     if args.resume and args.raw_csv_out:
@@ -245,6 +263,7 @@ def main():
                 args.measure_cycles,
                 seed_base,
                 args.signal_delay_steps,
+                args.frame_extend_hold_cycles,
             ): (rate, repeat_idx, seed_base)
             for rate, repeat_idx, seed_base in tasks
         }

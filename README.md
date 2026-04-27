@@ -589,6 +589,21 @@ python3 scripts/run_multichannel_deadtime_tb.py \
   --raw-csv-out data/output/analysis/deadtime_hdl_raw.csv
 ```
 
+For the live ring/continuation RTL wrapper, point the bench at the current
+firmware branch and optionally drive continuation with a bounded
+`frame_extend_i` hold model:
+
+```sh
+python3 scripts/run_multichannel_deadtime_tb.py \
+  --firmware-root /Users/marroyav/repo/daphne-firmware-bram \
+  --builder-variant ring \
+  --rate-start 1000 \
+  --rate-stop 12000 \
+  --points 8 \
+  --signal-delay-steps 0 \
+  --frame-extend-hold-cycles 8
+```
+
 Render the comparison figure:
 
 ```sh
