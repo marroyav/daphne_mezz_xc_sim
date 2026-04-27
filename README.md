@@ -604,6 +604,20 @@ python3 scripts/run_multichannel_deadtime_tb.py \
   --frame-extend-hold-cycles 8
 ```
 
+There is also a dedicated convenience runner for the current
+`marroyav/coal-tail512` firmware branch:
+
+```sh
+python3 scripts/run_coal_tail512_hdl_study.py
+```
+
+This uses:
+
+- the live RTL `stc3_record_builder`
+- the live RTL `two_lane_readout_mux`
+- `frame_extend_i` drive with a bounded hold model
+- the current branch defaults for rates, repeats, and output file locations
+
 Render the comparison figure:
 
 ```sh
