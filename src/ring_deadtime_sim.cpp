@@ -51,6 +51,7 @@ struct Config {
   int builder_busy_cycles = 525;
   int prog_empty_thresh = 220;
   int prog_full_thresh = 200;
+  std::vector<double> tail_frame_probs = {0.73, 0.24, 0.03};
   std::string csv_out;
   std::string raw_csv_out;
 };
@@ -233,6 +234,9 @@ void print_help(std::ostream &os) {
      << "  --builder-busy-cycles N      Accepted-trigger busy time for legacy mode\n"
      << "  --prog-empty-thresh N        FIFO prog_empty threshold in words\n"
      << "  --prog-full-thresh N         FIFO prog_full threshold in words\n"
+     << "  --tail-frame-probs CSV       Probabilities for total fixed 512-sample\n"
+     << "                               frames per accepted interval in tail512\n"
+     << "                               mode (default: 0.73,0.24,0.03)\n"
      << "  --csv-out PATH               Summary CSV output\n"
      << "  --raw-csv-out PATH           Raw per-run CSV output\n"
      << "  --help                       Show this help\n";
@@ -305,6 +309,11 @@ Config parse_args(int argc, char **argv) {
       cfg.prog_empty_thresh = parse_int(require_value(arg), arg);
     } else if (arg == "--prog-full-thresh") {
       cfg.prog_full_thresh = parse_int(require_value(arg), arg);
+    } else if (arg == "--tail-frame-probs") {
+      cfg.tail_frame_probs.clear();
+      for (const auto &item : split_csv(require_value(arg))) {
+        cfg.tail_frame_probs.push_back(parse_double(item, arg));
+      }
     } else if (arg == "--csv-out") {
       cfg.csv_out = require_value(arg);
     } else if (arg == "--raw-csv-out") {
@@ -317,8 +326,9 @@ Config parse_args(int argc, char **argv) {
   if (cfg.channels != cfg.lanes * cfg.channels_per_lane) {
     throw std::runtime_error("channels must equal lanes * channels-per-lane");
   }
-  if (cfg.architecture != "ring" && cfg.architecture != "legacy" && cfg.architecture != "coalesced") {
-    throw std::runtime_error("architecture must be 'legacy', 'ring', or 'coalesced'");
+  if (cfg.architecture != "ring" && cfg.architecture != "legacy" &&
+      cfg.architecture != "coalesced" && cfg.architecture != "tail512") {
+    throw std::runtime_error("architecture must be 'legacy', 'ring', 'coalesced', or 'tail512'");
   }
   if (cfg.points < 1 || cfg.repeats < 1) {
     throw std::runtime_error("points and repeats must be positive");
@@ -331,6 +341,24 @@ Config parse_args(int argc, char **argv) {
   }
   if (cfg.frame_samples < 1 || cfg.record_words < 1 || cfg.serializer_cycles < 1) {
     throw std::runtime_error("frame, record, and serializer parameters must be positive");
+  }
+  if (cfg.architecture == "tail512") {
+    if (cfg.frame_samples != 512) {
+      throw std::runtime_error("tail512 currently requires --frame-samples 512");
+    }
+    if (cfg.tail_frame_probs.empty()) {
+      throw std::runtime_error("tail512 requires at least one tail-frame probability");
+    }
+    double prob_sum = 0.0;
+    for (double prob : cfg.tail_frame_probs) {
+      if (prob < 0.0) {
+        throw std::runtime_error("tail-frame probabilities must be non-negative");
+      }
+      prob_sum += prob;
+    }
+    if (prob_sum <= 0.0) {
+      throw std::runtime_error("tail-frame probabilities must sum to a positive value");
+    }
   }
   return cfg;
 }
@@ -390,7 +418,8 @@ struct Simulator {
         lanes(static_cast<std::size_t>(cfg.lanes)),
         p(rate_hz_per_channel <= 0 ? 0.0 : static_cast<double>(rate_hz_per_channel) / cfg.clock_hz),
         rng(static_cast<std::mt19937_64::result_type>(cfg.seed_start + repeat_index * cfg.seed_step + rate_hz_per_channel)),
-        geometric(p > 0.0 ? p : std::numeric_limits<double>::min()) {
+        geometric(p > 0.0 ? p : std::numeric_limits<double>::min()),
+        tail_frame_dist(cfg.tail_frame_probs.begin(), cfg.tail_frame_probs.end()) {
     for (int lane = 0; lane < cfg.lanes; ++lane) {
       lanes[static_cast<std::size_t>(lane)].channel_base = lane * cfg.channels_per_lane;
     }
@@ -463,6 +492,7 @@ struct Simulator {
   double p = 0.0;
   std::mt19937_64 rng;
   std::geometric_distribution<std::uint64_t> geometric;
+  std::discrete_distribution<int> tail_frame_dist;
   std::priority_queue<Event, std::vector<Event>, EventCompare> events;
   std::uint64_t event_seq = 0;
 
@@ -522,6 +552,13 @@ struct Simulator {
       return std::numeric_limits<std::uint64_t>::max();
     }
     return geometric(rng) + 1ULL;
+  }
+
+  int sample_tail_frame_count() {
+    if (cfg.tail_frame_probs.empty()) {
+      return 1;
+    }
+    return tail_frame_dist(rng) + 1;
   }
 
   void push_event(std::uint64_t time, EventKind kind, int channel) {
@@ -616,6 +653,10 @@ struct Simulator {
       handle_legacy_arrival(event);
       return;
     }
+    if (cfg.architecture == "tail512") {
+      handle_tail512_arrival(event);
+      return;
+    }
     if (cfg.architecture == "coalesced") {
       handle_coalesced_arrival(event);
       return;
@@ -692,14 +733,14 @@ struct Simulator {
   }
 
   void handle_maturity(const Event &event) {
-    if (cfg.architecture != "ring" && cfg.architecture != "coalesced") {
+    if (cfg.architecture != "ring" && cfg.architecture != "coalesced" && cfg.architecture != "tail512") {
       return;
     }
     maybe_start_serializer(event.channel, event.time);
   }
 
   void handle_serializer_end(const Event &event) {
-    if (cfg.architecture != "ring" && cfg.architecture != "coalesced") {
+    if (cfg.architecture != "ring" && cfg.architecture != "coalesced" && cfg.architecture != "tail512") {
       return;
     }
     ChannelState &state = channels[static_cast<std::size_t>(event.channel)];
@@ -875,6 +916,87 @@ struct Simulator {
     state.coverage_valid = true;
     state.coverage_end_ts = window_end_ts;
     push_event(window_end_ts, EventKind::Maturity, event.channel);
+    if (in_measure(event.time)) {
+      ++accepted_total;
+    }
+  }
+
+  void handle_tail512_arrival(const Event &event) {
+    ChannelState &state = channels[static_cast<std::size_t>(event.channel)];
+    if (p > 0.0) {
+      const std::uint64_t dt = next_arrival_delta();
+      if (dt != std::numeric_limits<std::uint64_t>::max() && event.time + dt <= total_cycles) {
+        push_event(event.time + dt, EventKind::Arrival, event.channel);
+      }
+    }
+
+    if (in_measure(event.time)) {
+      ++generated_total;
+    }
+
+    const std::uint64_t sample0_ts = sample0_ts_for(event.time);
+    const std::uint64_t window_end_ts = sample0_ts + static_cast<std::uint64_t>(cfg.frame_samples - 1);
+
+    bool oldest_valid = false;
+    std::uint64_t oldest_sample0_ts = 0;
+    if (state.serializer_active) {
+      oldest_valid = true;
+      oldest_sample0_ts = state.active_sample0_ts;
+    } else if (!state.queue.empty()) {
+      oldest_valid = true;
+      oldest_sample0_ts = state.queue.front().sample0_ts;
+    }
+
+    const bool ring_safe_ok =
+        (!oldest_valid) || (event.time - oldest_sample0_ts <= static_cast<std::uint64_t>(ring_safe_margin));
+    const bool output_ok = !prog_full(event.channel, event.time);
+    const bool already_covered = state.coverage_valid && window_end_ts <= state.coverage_end_ts;
+
+    if (already_covered) {
+      if (in_measure(event.time)) {
+        ++accepted_total;
+      }
+      return;
+    }
+
+    const std::uint64_t interval_start =
+        state.coverage_valid && sample0_ts <= state.coverage_end_ts ? state.coverage_end_ts + 1ULL : sample0_ts;
+    const int frames_needed = sample_tail_frame_count();
+    const bool queue_space_ok = static_cast<int>(state.queue.size()) + frames_needed <= cfg.queue_depth;
+    const bool can_accept = output_ok && ring_safe_ok && queue_space_ok;
+
+    if (!can_accept) {
+      if (!output_ok) {
+        if (in_measure(event.time)) {
+          ++full_total;
+          ++output_total;
+        }
+      } else if (!queue_space_ok) {
+        if (in_measure(event.time)) {
+          ++busy_total;
+          ++queue_total;
+        }
+      } else if (!ring_safe_ok) {
+        if (in_measure(event.time)) {
+          ++busy_total;
+          ++ring_total;
+        }
+      } else if (in_measure(event.time)) {
+        ++busy_total;
+      }
+      return;
+    }
+
+    for (int frame_idx = 0; frame_idx < frames_needed; ++frame_idx) {
+      const std::uint64_t frame_start =
+          interval_start + static_cast<std::uint64_t>(frame_idx * cfg.frame_samples);
+      const std::uint64_t frame_end = frame_start + static_cast<std::uint64_t>(cfg.frame_samples - 1);
+      state.queue.push_back(PendingFrame{frame_start, frame_end, frame_end});
+      push_event(frame_end, EventKind::Maturity, event.channel);
+    }
+    state.coverage_valid = true;
+    state.coverage_end_ts =
+        interval_start + static_cast<std::uint64_t>(frames_needed * cfg.frame_samples) - 1ULL;
     if (in_measure(event.time)) {
       ++accepted_total;
     }
