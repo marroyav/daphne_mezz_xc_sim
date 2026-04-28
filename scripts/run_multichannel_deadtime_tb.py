@@ -41,7 +41,7 @@ def parse_args():
     )
     parser.add_argument(
         "--builder-variant",
-        choices=["auto", "baseline", "ring"],
+        choices=["auto", "baseline", "ring", "lane"],
         default="auto",
         help="Select the dead-time bench wrapper to match the builder RTL interface.",
     )
@@ -79,6 +79,9 @@ def detect_builder_variant(repo_root: Path, firmware_root: str, requested_varian
         return requested_variant
 
     root = Path(firmware_root) if firmware_root else (repo_root / ".." / "daphne-firmware")
+    lane_serializer_path = (root / "rtl/isolated/subsystems/trigger/afe_stc3_stream_serializer.vhd").resolve()
+    if lane_serializer_path.exists():
+        return "lane"
     builder_path = (root / "rtl/isolated/subsystems/trigger/stc3_record_builder.vhd").resolve()
     text = builder_path.read_text(encoding="utf-8")
     return "ring" if "timestamp_i" in text else "baseline"
@@ -90,6 +93,8 @@ def ensure_built(repo_root: Path, firmware_root: str, builder_variant: str):
         cmd.append(f"DAPHNE_FIRMWARE_ROOT={firmware_root}")
     if builder_variant == "ring":
         cmd.append("DEADTIME_TB_SRC=hdl/multichannel_deadtime_tb_ring.vhd")
+    elif builder_variant == "lane":
+        cmd.append("DEADTIME_TB_SRC=hdl/multichannel_deadtime_tb_lane.vhd")
     subprocess.run(cmd, cwd=repo_root, check=True)
 
 
@@ -223,6 +228,8 @@ def main():
         raise ValueError("--signal-delay-steps only applies to the ring builder variant")
     if builder_variant == "baseline" and args.frame_extend_hold_cycles != 0:
         raise ValueError("--frame-extend-hold-cycles only applies to the ring builder variant")
+    if builder_variant == "lane" and args.frame_extend_hold_cycles != 0:
+        raise ValueError("--frame-extend-hold-cycles does not apply to the lane-serializer variant")
     if not args.skip_build:
         ensure_built(repo_root, args.firmware_root, builder_variant)
     print(

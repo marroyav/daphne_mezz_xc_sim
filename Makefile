@@ -14,6 +14,8 @@ GHDL_SRCS = \
 	$(wildcard $(DAPHNE_FIRMWARE_ROOT)/rtl/isolated/common/primitives/sample_ring_buffer.vhd) \
 	hdl/sync_fifo_fwft.vhd \
 	$(DAPHNE_FIRMWARE_ROOT)/rtl/isolated/subsystems/trigger/stc3_record_builder.vhd \
+	$(wildcard $(DAPHNE_FIRMWARE_ROOT)/rtl/isolated/subsystems/trigger/stc3_frame_source.vhd) \
+	$(wildcard $(DAPHNE_FIRMWARE_ROOT)/rtl/isolated/subsystems/trigger/afe_stc3_stream_serializer.vhd) \
 	$(DAPHNE_FIRMWARE_ROOT)/rtl/isolated/subsystems/readout/two_lane_readout_mux.vhd \
 	$(DEADTIME_TB_SRC)
 
