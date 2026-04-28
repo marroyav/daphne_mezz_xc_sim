@@ -7,6 +7,7 @@ entity sync_fifo_fwft is
     DATA_WIDTH_G        : positive := 72;
     DEPTH_G             : positive := 4096;
     COUNT_WIDTH_G       : positive := 13;
+    MEMORY_TYPE_G       : string   := "ultra";
     PROG_EMPTY_THRESH_G : natural  := 220;
     PROG_FULL_THRESH_G  : natural  := 200
   );
