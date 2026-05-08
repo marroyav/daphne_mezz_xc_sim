@@ -1,4 +1,6 @@
 /st_xc_sim
+/multichannel_deadtime_tb
+*.cf
 *.csv
 *_raw.txt
 *_xcorr.txt
