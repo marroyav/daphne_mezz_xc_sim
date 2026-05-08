@@ -14,6 +14,8 @@ RESULT_RE = re.compile(r"(\w+)=([0-9]+)")
 
 
 def parse_args():
+    repo_root = Path(__file__).resolve().parents[1]
+    default_fw = repo_root.parent / "daphne-firmware"
     parser = argparse.ArgumentParser(
         description="Run the HDL multichannel dead-time bench over a trigger-rate sweep."
     )
@@ -36,8 +38,8 @@ def parse_args():
     parser.add_argument("--raw-csv-out", default="")
     parser.add_argument(
         "--firmware-root",
-        default="",
-        help="Path to the daphne-firmware tree to compile against. Defaults to the Makefile value.",
+        default=str(default_fw),
+        help="Path to the daphne-firmware tree to compile against.",
     )
     parser.add_argument(
         "--builder-variant",
@@ -62,6 +64,9 @@ def parse_args():
         action="store_true",
         help="Reuse an already elaborated multichannel_deadtime_tb executable.",
     )
+    parser.add_argument("--channel-count", type=int, default=40)
+    parser.add_argument("--producer-count", type=int, default=5)
+    parser.add_argument("--channels-per-producer", type=int, default=8)
     return parser.parse_args()
 
 
@@ -79,8 +84,14 @@ def detect_builder_variant(repo_root: Path, firmware_root: str, requested_varian
         return requested_variant
 
     root = Path(firmware_root) if firmware_root else (repo_root / ".." / "daphne-firmware")
+    lane_wired_path = (root / "rtl/isolated/subsystems/trigger/afe_selftrigger_island.vhd").resolve()
+    if lane_wired_path.exists():
+        lane_text = lane_wired_path.read_text(encoding="utf-8")
+        if "afe_stc3_stream_serializer" in lane_text and "stc3_frame_source" in lane_text:
+            return "lane"
+
     lane_serializer_path = (root / "rtl/isolated/subsystems/trigger/afe_stc3_stream_serializer.vhd").resolve()
-    if lane_serializer_path.exists():
+    if lane_serializer_path.exists() and not (root / "rtl/isolated/subsystems/trigger/stc3_record_builder.vhd").exists():
         return "lane"
     builder_path = (root / "rtl/isolated/subsystems/trigger/stc3_record_builder.vhd").resolve()
     text = builder_path.read_text(encoding="utf-8")
@@ -113,6 +124,10 @@ def run_one(
     seed_base: int,
     signal_delay_steps: int,
     frame_extend_hold_cycles: int,
+    builder_variant: str,
+    channel_count: int,
+    producer_count: int,
+    channels_per_producer: int,
 ):
     bench = bench_executable(repo_root)
     cmd = [
@@ -126,6 +141,14 @@ def run_one(
         cmd.append(f"-gSIGNAL_DELAY_STEPS_G={signal_delay_steps}")
     if frame_extend_hold_cycles:
         cmd.append(f"-gFRAME_EXTEND_HOLD_CYCLES_G={frame_extend_hold_cycles}")
+    if builder_variant == "lane":
+        cmd.extend(
+            [
+                f"-gCHANNEL_COUNT_G={channel_count}",
+                f"-gPRODUCER_COUNT_G={producer_count}",
+                f"-gCHANNELS_PER_PRODUCER_G={channels_per_producer}",
+            ]
+        )
     with TemporaryDirectory(prefix="daphne-deadtime-tb-") as run_dir:
         proc = subprocess.run(cmd, cwd=run_dir, check=True, capture_output=True, text=True)
     result_line = None
@@ -171,6 +194,9 @@ def summarise(rows):
 
         row = {
             "rate_hz_per_channel": rate,
+            "channels": samples[0].get("channels", 0),
+            "producers": samples[0].get("producers", 0),
+            "channels_per_producer": samples[0].get("channels_per_producer", 0),
             "repeats": len(samples),
             "dead_fraction_mean": mean(dead_values),
             "dead_fraction_std": stddev(dead_values),
@@ -224,19 +250,34 @@ def main():
         raise ValueError("--signal-delay-steps must be in [0, 31]")
     if args.frame_extend_hold_cycles < 0:
         raise ValueError("--frame-extend-hold-cycles must be non-negative")
+    if args.channel_count <= 0:
+        raise ValueError("--channel-count must be positive")
+    if args.producer_count <= 0:
+        raise ValueError("--producer-count must be positive")
+    if args.channels_per_producer <= 0:
+        raise ValueError("--channels-per-producer must be positive")
     if builder_variant == "baseline" and args.signal_delay_steps != 0:
         raise ValueError("--signal-delay-steps only applies to the ring builder variant")
     if builder_variant == "baseline" and args.frame_extend_hold_cycles != 0:
         raise ValueError("--frame-extend-hold-cycles only applies to the ring builder variant")
     if builder_variant == "lane" and args.frame_extend_hold_cycles != 0:
         raise ValueError("--frame-extend-hold-cycles does not apply to the lane-serializer variant")
+    if builder_variant == "lane" and args.channel_count != args.producer_count * args.channels_per_producer:
+        raise ValueError("--channel-count must equal --producer-count * --channels-per-producer for the lane-serializer variant")
+    if builder_variant != "lane" and (
+        args.channel_count != 40 or args.producer_count != 5 or args.channels_per_producer != 8
+    ):
+        raise ValueError("grouped producer arguments only apply to the lane-serializer variant")
     if not args.skip_build:
         ensure_built(repo_root, args.firmware_root, builder_variant)
     print(
         "USING "
         f"builder_variant={builder_variant} "
         f"signal_delay_steps={args.signal_delay_steps} "
-        f"frame_extend_hold_cycles={args.frame_extend_hold_cycles}"
+        f"frame_extend_hold_cycles={args.frame_extend_hold_cycles} "
+        f"channel_count={args.channel_count} "
+        f"producer_count={args.producer_count} "
+        f"channels_per_producer={args.channels_per_producer}"
     )
 
     raw_rows = []
@@ -271,6 +312,10 @@ def main():
                 seed_base,
                 args.signal_delay_steps,
                 args.frame_extend_hold_cycles,
+                builder_variant,
+                args.channel_count,
+                args.producer_count,
+                args.channels_per_producer,
             ): (rate, repeat_idx, seed_base)
             for rate, repeat_idx, seed_base in tasks
         }

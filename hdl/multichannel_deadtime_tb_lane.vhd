@@ -14,8 +14,8 @@ entity multichannel_deadtime_tb is
     CLOCK_PERIOD_G       : time     := 16 ns;
     CLOCK_HZ_G           : positive := 62500000;
     CHANNEL_COUNT_G      : positive := 40;
-    AFE_COUNT_G          : positive := 5;
-    CHANNELS_PER_AFE_G   : positive := 8;
+    PRODUCER_COUNT_G     : positive := 5;
+    CHANNELS_PER_PRODUCER_G : positive := 8;
     LANE_COUNT_G         : positive := 2;
     TRIGGER_RATE_HZ_G    : positive := 1000;
     SIGNAL_DELAY_STEPS_G : natural  := 0;
@@ -51,15 +51,15 @@ architecture tb of multichannel_deadtime_tb is
   signal desc_taken_s        : std_logic_array_t(0 to CHANNEL_COUNT_G - 1);
   signal ring_rd_addr_s      : slv11_array_t(0 to CHANNEL_COUNT_G - 1);
   signal ring_dout_s         : sample14_array_t(0 to CHANNEL_COUNT_G - 1);
-  signal afe_ready_s         : std_logic_array_t(0 to AFE_COUNT_G - 1);
-  signal afe_rd_en_s         : std_logic_array_t(0 to AFE_COUNT_G - 1);
-  signal afe_dout_s          : slv72_array_t(0 to AFE_COUNT_G - 1);
+  signal producer_ready_s    : std_logic_array_t(0 to PRODUCER_COUNT_G - 1);
+  signal producer_rd_en_s    : std_logic_array_t(0 to PRODUCER_COUNT_G - 1);
+  signal producer_dout_s     : slv72_array_t(0 to PRODUCER_COUNT_G - 1);
   signal mux_dout_s          : array_2x64_type;
   signal mux_valid_s         : std_logic_vector(LANE_COUNT_G - 1 downto 0);
   signal mux_last_s          : std_logic_vector(LANE_COUNT_G - 1 downto 0);
 begin
-  assert CHANNEL_COUNT_G = AFE_COUNT_G * CHANNELS_PER_AFE_G
-    report "CHANNEL_COUNT_G must equal AFE_COUNT_G * CHANNELS_PER_AFE_G"
+  assert CHANNEL_COUNT_G = PRODUCER_COUNT_G * CHANNELS_PER_PRODUCER_G
+    report "CHANNEL_COUNT_G must equal PRODUCER_COUNT_G * CHANNELS_PER_PRODUCER_G"
     severity failure;
 
   clock_s <= not clock_s after CLOCK_PERIOD_G / 2;
@@ -102,40 +102,41 @@ begin
       );
   end generate frame_source_gen;
 
-  afe_serializer_gen : for afe in 0 to AFE_COUNT_G - 1 generate
-    constant BASE_C : natural := afe * CHANNELS_PER_AFE_G;
+  producer_serializer_gen : for producer in 0 to PRODUCER_COUNT_G - 1 generate
+    constant BASE_C : natural := producer * CHANNELS_PER_PRODUCER_G;
   begin
     dut_serializer : entity work.afe_stc3_stream_serializer
       generic map (
-        CHANNELS_PER_AFE_G => CHANNELS_PER_AFE_G
+        CHANNELS_PER_AFE_G => CHANNELS_PER_PRODUCER_G
       )
       port map (
         clock_i             => clock_s,
         reset_i             => reset_s,
         reset_st_counters_i => '0',
-        desc_valid_i        => desc_valid_s(BASE_C to BASE_C + CHANNELS_PER_AFE_G - 1),
-        desc_i              => desc_s(BASE_C to BASE_C + CHANNELS_PER_AFE_G - 1),
-        desc_trailer_i      => desc_trailer_s(BASE_C to BASE_C + CHANNELS_PER_AFE_G - 1),
-        desc_taken_o        => desc_taken_s(BASE_C to BASE_C + CHANNELS_PER_AFE_G - 1),
-        ring_rd_addr_o      => ring_rd_addr_s(BASE_C to BASE_C + CHANNELS_PER_AFE_G - 1),
-        ring_dout_i         => ring_dout_s(BASE_C to BASE_C + CHANNELS_PER_AFE_G - 1),
-        ready_o             => afe_ready_s(afe),
-        rd_en_i             => afe_rd_en_s(afe),
-        dout_o              => afe_dout_s(afe)
+        desc_valid_i        => desc_valid_s(BASE_C to BASE_C + CHANNELS_PER_PRODUCER_G - 1),
+        desc_i              => desc_s(BASE_C to BASE_C + CHANNELS_PER_PRODUCER_G - 1),
+        desc_trailer_i      => desc_trailer_s(BASE_C to BASE_C + CHANNELS_PER_PRODUCER_G - 1),
+        desc_taken_o        => desc_taken_s(BASE_C to BASE_C + CHANNELS_PER_PRODUCER_G - 1),
+        ring_rd_addr_o      => ring_rd_addr_s(BASE_C to BASE_C + CHANNELS_PER_PRODUCER_G - 1),
+        ring_dout_i         => ring_dout_s(BASE_C to BASE_C + CHANNELS_PER_PRODUCER_G - 1),
+        ready_o             => producer_ready_s(producer),
+        rd_en_i             => producer_rd_en_s(producer),
+        dout_o              => producer_dout_s(producer)
       );
-  end generate afe_serializer_gen;
+  end generate producer_serializer_gen;
 
   dut_mux : entity work.two_lane_readout_mux
     generic map (
-      CHANNEL_COUNT_G => AFE_COUNT_G,
-      LANE_COUNT_G    => LANE_COUNT_G
+      CHANNEL_COUNT_G     => PRODUCER_COUNT_G,
+      LANE_COUNT_G        => LANE_COUNT_G,
+      CHANNELS_PER_LANE_G => (PRODUCER_COUNT_G + LANE_COUNT_G - 1) / LANE_COUNT_G
     )
     port map (
       clock_i => clock_s,
       reset_i => reset_s,
-      ready_i => afe_ready_s,
-      dout_i  => afe_dout_s,
-      rd_en_o => afe_rd_en_s,
+      ready_i => producer_ready_s,
+      dout_i  => producer_dout_s,
+      rd_en_o => producer_rd_en_s,
       dout_o  => mux_dout_s,
       valid_o => mux_valid_s,
       last_o  => mux_last_s
@@ -285,7 +286,7 @@ begin
       else
         lost_v := sum_generated_v - sum_packet_v;
       end if;
-      dead_ppm_v := (lost_v * 1000000) / sum_generated_v;
+      dead_ppm_v := natural(integer((real(lost_v) * 1000000.0) / real(sum_generated_v)));
     end if;
 
     write(line_v, string'("RESULT "));
@@ -293,6 +294,10 @@ begin
     write(line_v, TRIGGER_RATE_HZ_G);
     write(line_v, string'(" channels="));
     write(line_v, CHANNEL_COUNT_G);
+    write(line_v, string'(" producers="));
+    write(line_v, PRODUCER_COUNT_G);
+    write(line_v, string'(" channels_per_producer="));
+    write(line_v, CHANNELS_PER_PRODUCER_G);
     write(line_v, string'(" generated_total="));
     write(line_v, sum_generated_v);
     write(line_v, string'(" accepted_total="));
